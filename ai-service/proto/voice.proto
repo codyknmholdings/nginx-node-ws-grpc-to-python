@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package voice;
+
+message AudioChunk {
+  bytes data = 1;           // PCM 16-bit, 16kHz, mono
+  int64 timestamp = 2;
+  int32 sequence = 3;
+}
+
+message AudioResponse {
+  bytes data = 1;           // Audio trả về (ví dụ: TTS, echo, processed)
+  int64 timestamp = 2;
+  int32 sequence = 3;
+  string message = 4;       // optional: "processed", "error"
+}
+
+service VoiceStreaming {
+  // Bidirectional streaming: audio in → audio out
+  rpc StreamAudio(stream AudioChunk) returns (stream AudioResponse);
+}

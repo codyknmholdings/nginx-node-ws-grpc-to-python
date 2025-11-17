@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Voice Streaming Test</title>
+</head>
+<body>
+  <h1>WebSocket ↔ gRPC Voice Streaming</h1>
+  <button id="start">Start Mic</button>
+  <button id="stop" disabled>Stop</button>
+  <div id="status">Disconnected</div>
+
+  <script>
+    let ws = null;
+    let audioCtx = null;
+    let mediaStream;
+    let audioWorkletNode;
+    let analyser; // Force audio processing
+    let isRecording = false;
+    
+    // Audio playback queue
+    let playbackQueue = [];
+    let isPlaying = false;
+
+    function connectWebSocket() {
+      return new Promise((resolve, reject) => {
+        ws = new WebSocket('ws://localhost:80/ws');
+        ws.binaryType = 'arraybuffer';
+        
+        ws.onopen = () => {
+          console.log('WS Connected');
+          document.getElementById('status').textContent = 'Connected';
+          resolve();
+        };
+        
+        ws.onclose = () => {
+          console.log('WS Disconnected');
+          document.getElementById('status').textContent = 'Disconnected';
+        };
+        
+        ws.onerror = (err) => {
+          console.error('WS Error:', err);
+          reject(err);
+        };
+
+        // Nhận audio binary từ server và phát lại
+        ws.onmessage = async (e) => {
+          if (e.data instanceof ArrayBuffer) {
+            console.log('✅ Received audio chunk:', e.data.byteLength, 'bytes');
+            
+            // Initialize audioCtx if not yet created
+            if (!audioCtx) {
+              audioCtx = new AudioContext({ sampleRate: 16000 });
+              console.log('🎵 AudioContext created on first message');
+            }
+            
+            // Convert Int16 PCM to Float32 for Web Audio API
+            const int16Array = new Int16Array(e.data);
+            
+            // Debug: check raw Int16 data
+            const int16Debug = Array.from(int16Array.slice(0, 10)).join(', ');
+            console.log('🔢 Raw Int16 data (first 10):', int16Debug);
+            console.log('🔢 Min:', Math.min(...int16Array), 'Max:', Math.max(...int16Array));
+            
+            const float32Array = new Float32Array(int16Array.length);
+            for (let i = 0; i < int16Array.length; i++) {
+              float32Array[i] = int16Array[i] / 32768.0; // normalize to [-1, 1]
+            }
+            
+            // Create audio buffer and play
+            const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 16000);
+            audioBuffer.getChannelData(0).set(float32Array);
+            
+            // Debug: check first 10 samples
+            const samples = audioBuffer.getChannelData(0);
+            const sampleDebug = Array.from(samples.slice(0, 10)).map(s => s.toFixed(4)).join(', ');
+            console.log('📊 Buffer data (first 10 samples):', sampleDebug);
+            console.log('📊 Min:', Math.min(...samples).toFixed(4), 'Max:', Math.max(...samples).toFixed(4));
+            
+            playbackQueue.push(audioBuffer);
+            if (!isPlaying) {
+              playNext();
+            }
+          }
+        };
+      });
+    }
+    
+    function playNext() {
+      if (playbackQueue.length === 0) {
+        isPlaying = false;
+        console.log('⏸  Queue empty, stop playing');
+        return;
+      }
+      
+      isPlaying = true;
+      const buffer = playbackQueue.shift();
+      
+      console.log('📋 Dequeued buffer:', buffer.length, 'samples, queue remaining:', playbackQueue.length);
+      
+      try {
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        
+        // Direct connection like testTone()
+        source.connect(audioCtx.destination);
+        
+        source.onended = () => {
+          console.log('✅ Source ended, calling playNext() again');
+          playNext();
+        };
+        
+        console.log('▶️  Starting playback at', audioCtx.currentTime.toFixed(3));
+        source.start(0);
+        console.log('✔️  source.start() called');
+        
+      } catch (err) {
+        console.error('❌ Playback error:', err);
+        isPlaying = false;
+      }
+    }
+
+    document.getElementById('start').onclick = async () => {
+      try {
+        document.getElementById('status').textContent = 'Connecting...';
+        
+        // Initialize audio context
+        if (!audioCtx) {
+          audioCtx = new AudioContext({ sampleRate: 16000 });
+        }
+        
+        // Connect WebSocket
+        await connectWebSocket();
+        
+        // Load AudioWorklet module
+        await audioCtx.audioWorklet.addModule('audio-processor.js');
+        
+        // Request microphone access (let browser decide sample rate)
+        mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true
+          } 
+        });
+        
+        console.log('🎤 Microphone connected');
+        console.log('📋 MediaStream tracks:', mediaStream.getTracks().length);
+        const audioTrack = mediaStream.getAudioTracks()[0];
+        console.log('📋 Audio track enabled:', audioTrack?.enabled);
+        console.log('📋 Audio track state:', audioTrack?.readyState);
+        console.log('📋 Audio track settings:', audioTrack?.getSettings());
+        console.log('🎤 AudioContext sampleRate:', audioCtx.sampleRate);
+        
+        const source = audioCtx.createMediaStreamSource(mediaStream);
+        console.log('✅ MediaStreamSource created');
+        
+        // Test: connect source directly to analyser to see if we get audio
+        const testAnalyser = audioCtx.createAnalyser();
+        source.connect(testAnalyser);
+        testAnalyser.connect(audioCtx.destination);
+        
+        console.log('📊 Testing direct connection...');
+        setTimeout(() => {
+          const data = new Uint8Array(256);
+          testAnalyser.getByteFrequencyData(data);
+          const sum = data.reduce((a, b) => a + b, 0);
+          console.log('📊 Frequency sum:', sum, '(if 0 = no audio input)');
+        }, 500);
+        
+        // Create AudioWorklet node
+        audioWorkletNode = new AudioWorkletNode(audioCtx, 'audio-capture-processor');
+        
+        // Receive PCM data from worklet
+        audioWorkletNode.port.onmessage = (e) => {
+          if (!isRecording) return;
+          
+          // Log received data from worklet
+          if (e.data.audio && e.data.audio.byteLength > 0) {
+            console.log('🎧 Worklet sent:', e.data.audio.byteLength, 'bytes');
+          }
+          
+          // Send raw binary PCM data
+          if (ws && ws.readyState === WebSocket.OPEN && e.data.audio && e.data.audio.byteLength > 0) {
+            console.log('📤 Sending audio:', e.data.audio.byteLength, 'bytes');
+            ws.send(e.data.audio);
+          }
+        };
+        
+        source.connect(audioWorkletNode);
+        
+        // CRITICAL: Create analyser to force audio processing
+        // Without this, AudioWorklet input gets suspended
+        analyser = audioCtx.createAnalyser();
+        audioWorkletNode.connect(analyser);
+        analyser.connect(audioCtx.destination);
+        
+        // Disconnect test analyser
+        testAnalyser.disconnect();
+        
+        isRecording = true;
+        document.getElementById('start').disabled = true;
+        document.getElementById('stop').disabled = false;
+        console.log('🎤 Recording raw PCM audio with AudioWorklet...');
+        console.log('🔌 Connections: source → audioWorkletNode → analyser → destination');
+        
+      } catch (err) {
+        console.error('Microphone error:', err);
+        document.getElementById('status').textContent = 'Error: ' + err.message;
+        alert('Cannot access microphone: ' + err.message);
+      }
+    };
+    
+    document.getElementById('stop').onclick = () => {
+      isRecording = false;
+      
+      if (audioWorkletNode) {
+        audioWorkletNode.disconnect();
+        audioWorkletNode = null;
+      }
+      
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+      
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+      
+      document.getElementById('start').disabled = false;
+      document.getElementById('stop').disabled = true;
+      document.getElementById('status').textContent = 'Stopped';
+      console.log('⏹ Recording stopped');
+    };
+    
+    // Test function: send dummy audio (256 samples = 512 bytes of Int16)
+    window.testAudio = async () => {
+      try {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          await connectWebSocket();
+        }
+        
+        // Create dummy sine wave
+        const dummyBuffer = new Int16Array(512);
+        for (let i = 0; i < 512; i++) {
+          dummyBuffer[i] = Math.sin(i / 100) * 32767 * 0.5; // 50% volume
+        }
+        
+        console.log('📤 Sending test audio: 512 bytes');
+        ws.send(dummyBuffer.buffer);
+      } catch (err) {
+        console.error('Test audio error:', err);
+      }
+    };
+    
+    // Test function: generate and play test tone directly
+    window.testTone = () => {
+      try {
+        if (!audioCtx) {
+          audioCtx = new AudioContext({ sampleRate: 16000 });
+        }
+        
+        console.log('🔊 AudioContext state:', audioCtx.state);
+        console.log('🔊 AudioContext sampleRate:', audioCtx.sampleRate);
+        
+        // Create a simple sine wave (440 Hz)
+        const sampleRate = audioCtx.sampleRate;
+        const frequency = 440; // A note
+        const duration = 1; // 1 second
+        const numSamples = sampleRate * duration;
+        
+        const buffer = audioCtx.createBuffer(1, numSamples, sampleRate);
+        const channelData = buffer.getChannelData(0);
+        
+        for (let i = 0; i < numSamples; i++) {
+          channelData[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.3;
+        }
+        
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioCtx.destination);
+        
+        console.log('▶️  Playing 440Hz test tone...');
+        source.start(0);
+        
+        source.onended = () => {
+          console.log('✅ Test tone finished');
+        };
+        
+      } catch (err) {
+        console.error('Test tone error:', err);
+      }
+    };
+  </script>
+</body>
+</html>
