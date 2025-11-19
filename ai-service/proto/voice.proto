@@ -1,6 +1,37 @@
 syntax = "proto3";
 
-package voice;
+package live_call;
+
+service LiveCall {
+  rpc StreamAudio(stream AudioRequest) returns (stream AudioResponse);
+}
+
+message AudioRequest {
+  oneof request_type {
+    InitialInfo initial_info = 1;
+    bytes audio_chunk = 2;
+  }
+}
+enum CallType {
+  CALL_TYPE_UNSPECIFIED = 0;
+  INBOUND = 1;
+  OUTBOUND = 2;
+}
+
+message InitialInfo {
+  string call_id = 1;
+  string customer_phone_number = 2;
+  string token = 3;
+  string hotline = 4;
+  CallType type_call = 5;
+  string  url_audio_file=6;
+}
+
+message Response{
+  string type = 1;
+  string call_id = 2;
+  int32 sequence = 3;
+}
 
 message AudioChunk {
   bytes data = 1;           // PCM 16-bit, 16kHz, mono
@@ -9,13 +40,6 @@ message AudioChunk {
 }
 
 message AudioResponse {
-  bytes data = 1;           // Audio trả về (ví dụ: TTS, echo, processed)
-  int64 timestamp = 2;
-  int32 sequence = 3;
-  string message = 4;       // optional: "processed", "error"
-}
-
-service VoiceStreaming {
-  // Bidirectional streaming: audio in → audio out
-  rpc StreamAudio(stream AudioChunk) returns (stream AudioResponse);
+  AudioChunk audio_chunk = 1;
+  Response response = 2;
 }

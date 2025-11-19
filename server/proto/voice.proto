@@ -1,21 +1,114 @@
 syntax = "proto3";
 
-package voice;
+package live_call;
 
-message AudioChunk {
-  bytes data = 1;           // PCM 16-bit, 16kHz, mono
-  int64 timestamp = 2;
-  int32 sequence = 3;
+// Service LiveCall định nghĩa một phương thức streaming hai chiều,
+// cho phép client và server gửi một luồng các tin nhắn yêu cầu và phản hồi.
+service LiveCall {
+  rpc StreamCall(stream ClientRequest) returns (stream ServerResponse);
 }
 
-message AudioResponse {
-  bytes data = 1;           // Audio trả về (ví dụ: TTS, echo, processed)
-  int64 timestamp = 2;
-  int32 sequence = 3;
-  string message = 4;       // optional: "processed", "error"
+// ===============================================================
+// Tin nhắn từ Client gửi đến Server
+// ===============================================================
+
+// Cấu trúc bao bọc cho mọi tin nhắn từ Client.
+// Ánh xạ trực tiếp với cấu trúc JSON: { "status": ..., "data": ... }
+message ClientRequest {
+  bool status = 1; // Luôn là 'true' cho các yêu cầu hợp lệ từ client.
+
+  // 'data' chứa một trong các loại tin nhắn cụ thể.
+  oneof data {
+    InitialInfo initial_info = 2;
+    ClientAudioChunk play_audio = 3;
+    DisconnectMessage disconnect = 4;
+  }
 }
 
-service VoiceStreaming {
-  // Bidirectional streaming: audio in → audio out
-  rpc StreamAudio(stream AudioChunk) returns (stream AudioResponse);
+// Enum để định nghĩa loại cuộc gọi.
+enum CallType {
+  CALL_TYPE_UNSPECIFIED = 0;
+  INBOUND = 1;
+  OUTBOUND = 2;
+}
+
+// 1. data: Tin nhắn khởi tạo cuộc gọi (tương ứng với type: "info_call").
+message InitialInfo {
+  string workspace_id = 1;
+  string call_id = 2;
+  string customer_phone_number = 3;
+  CallType type_call = 4;
+  string hotline = 5;
+  optional string url_audio_file = 6;
+}
+
+// 2. data: Tin nhắn chứa gói âm thanh (tương ứng với type: "play_audio").
+message ClientAudioChunk {
+  int32 sample_rate = 1;
+  int32 sample_width = 2;
+  int32 num_channels = 3;
+  float duration = 4;
+  bytes audio_content = 5; // Dữ liệu base64
+}
+
+// 3. data: Tin nhắn yêu cầu ngắt kết nối (tương ứng với type: "disconnect").
+// Có thể để trống vì sự tồn tại của nó đã mang ý nghĩa.
+message DisconnectMessage {}
+
+
+// ===============================================================
+// Tin nhắn từ Server gửi đến Client
+// ===============================================================
+
+// Cấu trúc bao bọc cho mọi tin nhắn từ Server.
+// Ánh xạ trực tiếp với cấu trúc JSON: { "status": ..., "data": ... }
+message ServerResponse {
+  bool status = 1; // 'true' cho tin nhắn thành công, 'false' cho lỗi.
+
+  // 'data' chứa một trong các loại tin nhắn cụ thể.
+  oneof data {
+    ServerAudioChunk audio_output = 2;
+    SignalMessage signal = 3;
+    ErrorMessage error = 4;
+  }
+}
+
+// 1. data: Gói âm thanh do AI tạo ra.
+message ServerAudioChunk {
+  // Bạn có thể thêm các metadata nếu cần, ví dụ: sample_rate.
+  // Nếu không, chỉ cần gửi dữ liệu audio thô.
+  bytes audio_content = 1;
+}
+
+// 2. data: Tin nhắn điều hướng cuộc gọi (Signal Message).
+message SignalMessage {
+  oneof signal_type {
+    EndCallSignal end_call = 1;
+    TransferCallSignal transfer_call = 2;
+  }
+}
+
+// Tín hiệu kết thúc cuộc gọi (type: "end_call").
+message EndCallSignal {
+  string call_id = 1;
+}
+
+// Thông tin nhân viên để chuyển cuộc gọi.
+message StaffInfo {
+  string name = 1;
+  string phone_number = 2;
+}
+
+// Tín hiệu chuyển cuộc gọi (type: "transfer_call").
+message TransferCallSignal {
+  string call_id = 1;
+  string customer_phone_number = 2;
+  repeated StaffInfo target_staff = 3;
+}
+
+// 3. data: Tin nhắn lỗi.
+message ErrorMessage {
+  int32 error_code = 1;
+  int32 internal_error_code = 2;
+  string message = 3;
 }

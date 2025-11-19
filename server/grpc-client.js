@@ -4,8 +4,12 @@ const protoLoader = require('@grpc/proto-loader');
 
 const packageDef = protoLoader.loadSync('./proto/voice.proto', {});
 const grpcObject = grpc.loadPackageDefinition(packageDef);
-const voicePackage = grpcObject.voice;
+const liveCallPackage = grpcObject.live_call;
 
-const client = new voicePackage.VoiceStreaming('ai-service:50051', grpc.credentials.createInsecure());
+const GRPC_SERVER = process.env.GRPC_SERVER || '192.168.1.36:50051';
+
+const client = new liveCallPackage.LiveCall(GRPC_SERVER, grpc.credentials.createInsecure());
+
+console.log(`[gRPC Client] Initialized for server: ${GRPC_SERVER}`);
 
 module.exports = { client };
