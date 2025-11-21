@@ -31,7 +31,7 @@
       return new Promise((resolve, reject) => {
         // Auto-detect protocol (ws or wss) and host based on current page URL
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = 'voice-bot-ws.knmholdings.org'; // e.g. localhost:8080 or my-domain.com
+        const host = window.location.host; // e.g. localhost:8080 or my-domain.com
         const token = '3k659sdg98gkn3d9ghhg977';
         const phone = '84987654321';
         const callId = 'call123';
