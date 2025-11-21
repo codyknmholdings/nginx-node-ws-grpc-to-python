@@ -51,6 +51,10 @@
         ws.onclose = () => {
           console.log('❌ WebSocket Disconnected');
           document.getElementById('status').textContent = 'Disconnected';
+          // Stop recording if connection drops
+          if (isRecording) {
+             document.getElementById('stop').click();
+          }
         };
         
         ws.onerror = (event) => {
