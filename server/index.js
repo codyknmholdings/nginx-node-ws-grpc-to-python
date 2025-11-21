@@ -43,6 +43,8 @@ app.get('/audio-processor.js', (req, res) => {
 server.on('upgrade', (request, socket, head) => {
     const parsedUrl = url.parse(request.url, true);
     const { pathname, query } = parsedUrl;
+    console.log('[Server] Upgrade request for:', pathname);
+    console.log('[Server] Query parameters:', query);
 
     // Path pattern: /live-call/websocket/{call_id}/{customer_phone_number}
     const match = pathname.match(/^\/live-call\/websocket\/([^\/]+)\/([^\/]+)$/);
