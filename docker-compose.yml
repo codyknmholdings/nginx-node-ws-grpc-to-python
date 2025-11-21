@@ -1,8 +1,10 @@
 services:
   nginx:
     image: nginx:alpine
+    env_file:
+      - ./.env
     ports:
-      - "8080:80"
+      - "${PORT}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
     depends_on:

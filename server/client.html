@@ -36,7 +36,7 @@
         const phone = '84987654321';
         const callId = 'call123';
         // Construct the WebSocket URL dynamically
-        const wsUrl = `${protocol}//${host}/live-call/websocket/${callId}/?token=${token}`;
+        const wsUrl = `${protocol}//${host}/live-call/websocket/${callId}/${phone}/?token=${token}`;
         console.log('Connecting to:', wsUrl);
 
         ws = new WebSocket(wsUrl);
