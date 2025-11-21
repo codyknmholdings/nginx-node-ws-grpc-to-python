@@ -214,15 +214,19 @@ wss.on('connection', (ws, request) => {
     ws.on('close', () => {
         console.log('[WebSocket] Client disconnected');
 
-        // Send disconnect message if stream is still active
-        if (callInitialized) {
+        // Send disconnect message if stream is still active and writable
+        if (callInitialized && stream.writable) {
             const disconnectRequest = {
                 status: true,
                 disconnect: {}
             };
 
             console.log('[gRPC] Sending disconnect message');
-            stream.write(disconnectRequest);
+            try {
+                stream.write(disconnectRequest);
+            } catch (err) {
+                console.error('[gRPC] Error sending disconnect message:', err.message);
+            }
         }
 
         stream.end();
