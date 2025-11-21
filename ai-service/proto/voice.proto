@@ -2,44 +2,100 @@ syntax = "proto3";
 
 package live_call;
 
+// Service định nghĩa
 service LiveCall {
-  rpc StreamAudio(stream AudioRequest) returns (stream AudioResponse);
+  rpc StreamCall(stream ClientRequest) returns (stream ServerResponse);
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
 }
 
-message AudioRequest {
-  oneof request_type {
-    InitialInfo initial_info = 1;
-    bytes audio_chunk = 2;
-  }
+message HealthCheckRequest {
+  string service = 1;
 }
-enum CallType {
-  CALL_TYPE_UNSPECIFIED = 0;
-  INBOUND = 1;
-  OUTBOUND = 2;
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3;
+  }
+  ServingStatus status = 1;
+}
+// ================= REQUEST (Client -> Server) =================
+
+message ClientRequest {
+  bool status = 1; // Map với JSON "status": true
+
+  oneof data {
+    InitialInfo initial_info = 2;     // type: "info_call"
+    ClientAudioChunk play_audio = 3;  // type: "play_audio"
+    DisconnectMessage disconnect = 4; // type: "disconnect"
+  }
 }
 
 message InitialInfo {
+  string workspace_id = 1;
+  string call_id = 2;
+  string customer_phone_number = 3;
+  string type_call = 4; // "inbound" hoặc "outbound"
+  string hotline = 5;
+  string url_audio_file = 6; // Optional
+}
+
+message ClientAudioChunk {
+  int32 sample_rate = 1;
+  int32 sample_width = 2;
+  int32 num_channels = 3;
+  float duration = 4;
+  bytes audio_content = 5; // Gửi raw bytes (không cần base64 khi dùng gRPC để tối ưu)
+}
+
+message DisconnectMessage {}
+
+// ================= RESPONSE (Server -> Client) =================
+
+message ServerResponse {
+  bool status = 1; // Map với JSON "status": true/false
+
+  oneof data {
+    ServerAudioChunk audio_output = 2;
+    SignalMessage signal = 3;
+    ErrorMessage error = 4;
+  }
+}
+
+message ServerAudioChunk {
+  int32 sample_rate = 1;
+  int32 sample_width = 2;
+  int32 num_channels = 3;
+  float duration = 4;
+  bytes audio_content = 5;
+}
+
+message SignalMessage {
+  oneof signal_type {
+    EndCallSignal end_call = 1;
+    TransferCallSignal transfer_call = 2;
+  }
+}
+
+message EndCallSignal {
+  string call_id = 1;
+}
+
+message StaffInfo {
+  string name = 1;
+  string phone_number = 2;
+}
+
+message TransferCallSignal {
   string call_id = 1;
   string customer_phone_number = 2;
-  string token = 3;
-  string hotline = 4;
-  CallType type_call = 5;
-  string  url_audio_file=6;
+  repeated StaffInfo target_staff = 3;
 }
 
-message Response{
-  string type = 1;
-  string call_id = 2;
-  int32 sequence = 3;
-}
-
-message AudioChunk {
-  bytes data = 1;           // PCM 16-bit, 16kHz, mono
-  int64 timestamp = 2;
-  int32 sequence = 3;
-}
-
-message AudioResponse {
-  AudioChunk audio_chunk = 1;
-  Response response = 2;
+message ErrorMessage {
+  int32 error_code = 1;
+  int32 internal_error_code = 2;
+  string message = 3;
 }

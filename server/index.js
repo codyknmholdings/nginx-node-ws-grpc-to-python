@@ -9,9 +9,24 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
+// Function to check gRPC connection
+async function checkGrpcConnection() {
+    return new Promise((resolve, reject) => {
+        const deadline = Date.now() + 5000; // 5 second timeout
+        client.waitForReady(deadline, (error) => {
+            if (error) {
+                reject(new Error(`[gRPC Connection Error] Cannot connect to ${process.env.GRPC_SERVER || '192.168.1.36:50051'}: ${error.message}`));
+            } else {
+                resolve(true);
+                console.log(`[gRPC Connection] ✓ Successfully connected to ${process.env.GRPC_SERVER || '192.168.1.36:50051'}`);
+            }
+        });
+    });
+}
+
 // Configuration
 const WORKSPACE_ID = 'workspace_001';
-const HOTLINE = '+84-123-456-789';
+const HOTLINE = '+84987654321';
 
 // Serve static files
 app.get('/', (req, res) => {
@@ -34,7 +49,21 @@ wss.on('connection', (ws) => {
     // Tạo gRPC bidirectional stream
     const stream = client.StreamCall((error, response) => {
         if (error) {
-            console.error('[gRPC] Stream error:', error);
+            console.error('[gRPC] Stream callback error:', error.message);
+        }
+    });
+
+    // Log stream events
+    stream.on('prolog', () => console.log('[gRPC] Stream prolog'));
+    stream.on('headers', (headers) => console.log('[gRPC] Stream headers received'));
+
+    // Handle stream errors immediately
+    stream.on('error', (err) => {
+        console.error('[gRPC] Stream error event:', err.message);
+        console.error('[gRPC] Error code:', err.code);
+        console.error('[gRPC] Error details:', err.details);
+        if (ws.readyState === 1) {
+            ws.close(1011, `gRPC error: ${err.message}`);
         }
     });
 
@@ -44,22 +73,23 @@ wss.on('connection', (ws) => {
 
         if (!serverResponse.status) {
             // Error response
-            if (serverResponse.data.error) {
-                console.error('[gRPC] Error:', serverResponse.data.error.message);
+            if (serverResponse.error) {
+                console.error('[gRPC] Error:', serverResponse.error.message);
             }
             return;
         }
 
         // Handle different response types
-        if (serverResponse.data.audio_output) {
-            const audioChunk = serverResponse.data.audio_output;
+        if (serverResponse.audio_output) {
+            const audioChunk = serverResponse.audio_output;
             console.log(`[gRPC] Received audio output: ${audioChunk.audio_content.length} bytes`);
 
             if (ws.readyState === 1) { // OPEN
                 ws.send(audioChunk.audio_content, { binary: true });
+                console.log(`[WebSocket] Sent audio chunk to client: ${audioChunk.audio_content.length} bytes`);
             }
-        } else if (serverResponse.data.signal) {
-            const signal = serverResponse.data.signal;
+        } else if (serverResponse.signal) {
+            const signal = serverResponse.signal;
             if (signal.end_call) {
                 console.log('[gRPC] Received end_call signal for:', signal.end_call.call_id);
                 if (ws.readyState === 1) {
@@ -72,61 +102,77 @@ wss.on('connection', (ws) => {
         }
     });
 
+    // Send InitialInfo immediately
+    console.log('[gRPC] Sending InitialInfo to gRPC (first message)');
+
+    // Create ClientRequest with InitialInfo
+    const initialRequest = {
+        status: true,
+        initial_info: {
+            workspace_id: WORKSPACE_ID,
+            call_id: callId,
+            customer_phone_number: '+84-987-654-321',
+            type_call: 'inbound',
+            hotline: HOTLINE,
+            url_audio_file: ""
+        }
+    };
+    console.log('[gRPC] InitialInfo request:', JSON.stringify(initialRequest, null, 2));
+
+    try {
+        stream.write(initialRequest);
+        callInitialized = true;
+        console.log('[gRPC] ✓ InitialInfo sent successfully');
+    } catch (err) {
+        console.error('[gRPC] ✗ Error writing InitialInfo:', err.message);
+        if (ws.readyState === 1) {
+            ws.close(1011, 'Failed to send InitialInfo to gRPC');
+        }
+    }
+
     // WebSocket → gRPC (receive client messages)
     ws.on('message', (data, isBinary) => {
         if (isBinary && data instanceof Buffer) {
-            // Send initial call info if not yet initialized
+            // Only send if stream is initialized
             if (!callInitialized) {
-                console.log('[WebSocket] First audio chunk received, sending InitialInfo');
-
-                const clientRequest = {
-                    status: true,
-                    data: {
-                        initial_info: {
-                            workspace_id: WORKSPACE_ID,
-                            call_id: callId,
-                            customer_phone_number: '+84-987-654-321',
-                            type_call: 1, // INBOUND
-                            hotline: HOTLINE,
-                            url_audio_file: null
-                        }
-                    }
-                };
-
-                console.log('[gRPC] Sending InitialInfo:', clientRequest.data.initial_info);
-                stream.write(clientRequest);
-                callInitialized = true;
+                console.log('[WebSocket] ⚠ Stream not initialized yet, discarding audio chunk');
+                return;
             }
 
             // Send audio chunk
             console.log(`[WebSocket] Received audio: ${data.length} bytes`);
 
-            const audioChunk = {
-                sample_rate: 16000,
-                sample_width: 16,
-                num_channels: 1,
-                duration: data.length / (16000 * 2), // Int16 = 2 bytes per sample
-                audio_content: data
-            };
+            // Convert Float32 (from client) to Int16 (for gRPC)
+            // Data is Float32 (4 bytes), so length/4 = number of samples
+            const float32Buffer = new Float32Array(data.buffer, data.byteOffset, data.length / 4);
+            const int16Buffer = new Int16Array(float32Buffer.length);
+
+            for (let i = 0; i < float32Buffer.length; i++) {
+                const s = Math.max(-1, Math.min(1, float32Buffer[i]));
+                int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+
+            const audioContent = Buffer.from(int16Buffer.buffer);
 
             const clientRequest = {
                 status: true,
-                data: {
-                    play_audio: audioChunk
+                play_audio: {
+                    sample_rate: 16000,
+                    sample_width: 16,
+                    num_channels: 1,
+                    duration: audioContent.length / (16000 * 2), // Int16 = 2 bytes per sample
+                    audio_content: audioContent
                 }
             };
 
-            console.log(`[gRPC] Sending audio chunk: ${data.length} bytes (chunk #${audioChunkCount++})`);
-            stream.write(clientRequest);
+            console.log(`[gRPC] Sending audio chunk: ${audioContent.length} bytes (chunk #${audioChunkCount++})`);
+            try {
+                stream.write(clientRequest);
+            } catch (err) {
+                console.error('[gRPC] Error sending audio chunk:', err.message);
+            }
         } else {
             console.log('[WebSocket] Received non-binary data, ignoring');
-        }
-    });
-
-    stream.on('error', (err) => {
-        console.error('[gRPC] Stream error:', err);
-        if (ws.readyState === 1) {
-            ws.close(1011, 'gRPC stream error');
         }
     });
 
@@ -137,9 +183,7 @@ wss.on('connection', (ws) => {
         if (callInitialized) {
             const disconnectRequest = {
                 status: true,
-                data: {
-                    disconnect: {}
-                }
+                disconnect: {}
             };
 
             console.log('[gRPC] Sending disconnect message');
@@ -156,7 +200,16 @@ wss.on('connection', (ws) => {
 });
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => {
-    console.log(`[Server] WebSocket server running on ws://localhost:${PORT}`);
-    console.log(`[Server] gRPC client connecting to: 192.168.1.36:50051`);
-});
+
+// Check gRPC connection before starting server
+checkGrpcConnection()
+    .then(() => {
+        server.listen(PORT, () => {
+            console.log(`[Server] WebSocket server running on ws://localhost:${PORT}`);
+            console.log(`[Server] gRPC client connecting to: ${process.env.GRPC_SERVER}`);
+        });
+    })
+    .catch((error) => {
+        console.error(error.message);
+        process.exit(1);
+    });
