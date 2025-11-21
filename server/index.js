@@ -4,10 +4,12 @@ const { createServer } = require('http');
 const { WebSocketServer } = require('ws');
 const { client } = require('./grpc-client');
 const crypto = require('crypto');
+const url = require('url');
 
 const app = express();
 const server = createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ noServer: true });
+const HARDCODED_TOKEN = '3k659sdg98gkn3d9ghhg977';
 
 // Function to check gRPC connection
 async function checkGrpcConnection() {
@@ -38,11 +40,41 @@ app.get('/audio-processor.js', (req, res) => {
     res.sendFile(__dirname + '/audio-processor.js');
 });
 
-wss.on('connection', (ws) => {
+server.on('upgrade', (request, socket, head) => {
+    const parsedUrl = url.parse(request.url, true);
+    const { pathname, query } = parsedUrl;
+
+    // Path pattern: /live-call/websocket/{call_id}/{customer_phone_number}
+    const match = pathname.match(/^\/live-call\/websocket\/([^\/]+)\/([^\/]+)$/);
+
+    if (match) {
+        const callId = match[1];
+        const customerPhoneNumber = match[2];
+        const token = query.token;
+
+        // Hardcoded token check
+        if (token === HARDCODED_TOKEN) {
+            wss.handleUpgrade(request, socket, head, (ws) => {
+                ws.callId = callId;
+                ws.customerPhoneNumber = customerPhoneNumber;
+                wss.emit('connection', ws, request);
+            });
+        } else {
+            socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+            socket.destroy();
+        }
+    } else {
+        socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+        socket.destroy();
+    }
+});
+
+wss.on('connection', (ws, request) => {
     console.log('[WebSocket] Client connected');
 
     const connectionId = crypto.randomUUID();
-    const callId = crypto.randomUUID();
+    const callId = ws.callId || crypto.randomUUID();
+    const customerPhoneNumber = ws.customerPhoneNumber || '+84-987-654-321';
     let callInitialized = false;
     let audioChunkCount = 0;
 
@@ -111,7 +143,7 @@ wss.on('connection', (ws) => {
         initial_info: {
             workspace_id: WORKSPACE_ID,
             call_id: callId,
-            customer_phone_number: '+84-987-654-321',
+            customer_phone_number: customerPhoneNumber,
             type_call: 'inbound',
             hotline: HOTLINE,
             url_audio_file: ""

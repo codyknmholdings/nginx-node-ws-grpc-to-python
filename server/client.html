@@ -29,7 +29,17 @@
 
     function connectWebSocket() {
       return new Promise((resolve, reject) => {
-        ws = new WebSocket('ws://localhost:8080/ws');
+        // Auto-detect protocol (ws or wss) and host based on current page URL
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host; // e.g. localhost:8080 or my-domain.com
+        const token = '3k659sdg98gkn3d9ghhg977';
+        const phone = '84987654321';
+        const callId = 'call123';
+        // Construct the WebSocket URL dynamically
+        const wsUrl = `${protocol}//${host}/live-call/websocket/${callId}/?token=${token}`;
+        console.log('Connecting to:', wsUrl);
+
+        ws = new WebSocket(wsUrl);
         ws.binaryType = 'arraybuffer';
         
         ws.onopen = () => {
