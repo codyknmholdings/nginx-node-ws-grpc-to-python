@@ -2,7 +2,7 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "80:80"
+      - "8080:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
     depends_on:
@@ -12,11 +12,10 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
     environment:
-      - GRPC_SERVER=192.168.1.37:55555
       - PORT=8080
+    env_file:
+      - ./.env
     # Note: ai-service is no longer included.
     # The server connects to external gRPC AI service at 192.168.1.36:50051
 
