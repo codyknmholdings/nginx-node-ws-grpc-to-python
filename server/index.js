@@ -50,6 +50,7 @@ server.on('upgrade', (request, socket, head) => {
     const match = pathname.match(/^\/live-call\/websocket\/([^\/]+)\/([^\/]+)$/);
 
     if (match) {
+        console.log('[Server] WebSocket upgrade matched. Call ID:', match[1], 'Customer Phone Number:', match[2]);
         const callId = match[1];
         const customerPhoneNumber = match[2];
         const token = query.token;
