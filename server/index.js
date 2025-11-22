@@ -73,7 +73,7 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 wss.on('connection', (ws, request) => {
-    console.log('[WebSocket] Client connected');
+    // console.log('[WebSocket] Client connected');
 
     const connectionId = crypto.randomUUID();
     const callId = ws.callId || crypto.randomUUID();
@@ -89,8 +89,8 @@ wss.on('connection', (ws, request) => {
     });
 
     // Log stream events
-    stream.on('prolog', () => console.log('[gRPC] Stream prolog'));
-    stream.on('headers', (headers) => console.log('[gRPC] Stream headers received'));
+    // stream.on('prolog', () => console.log('[gRPC] Stream prolog'));
+    // stream.on('headers', (headers) => console.log('[gRPC] Stream headers received'));
 
     // Handle stream errors immediately
     stream.on('error', (err) => {
@@ -104,7 +104,7 @@ wss.on('connection', (ws, request) => {
 
     // gRPC → WebSocket (receive server responses)
     stream.on('data', (serverResponse) => {
-        console.log('[gRPC] Received ServerResponse - status:', serverResponse.status);
+        // console.log('[gRPC] Received ServerResponse - status:', serverResponse.status);
 
         if (!serverResponse.status) {
             // Error response
@@ -122,7 +122,7 @@ wss.on('connection', (ws, request) => {
         // Handle different response types
         if (serverResponse.audio_output) {
             const audioChunk = serverResponse.audio_output;
-            console.log(`[gRPC] Received audio output: ${audioChunk.audio_content.length} bytes`);
+            // console.log(`[gRPC] Received audio output: ${audioChunk.audio_content.length} bytes`);
 
             if (ws.readyState === 1) { // OPEN
                 // Convert Buffer to Base64
@@ -133,22 +133,50 @@ wss.on('connection', (ws, request) => {
                     }
                 };
                 ws.send(JSON.stringify(responseMessage));
-                console.log(`[WebSocket] Sent audio chunk to client: ${audioChunk.audio_content.length} bytes`);
+                // console.log(`[WebSocket] Sent audio chunk to client: ${audioChunk.audio_content.length} bytes`);
             }
         } else if (serverResponse.signal) {
             const signal = serverResponse.signal;
-            if (ws.readyState === 1) {
-                ws.send(JSON.stringify({ signal: signal }));
-            }
 
             if (signal.end_call) {
-                console.log('[gRPC] Received end_call signal for:', signal.end_call.call_id);
+                // console.log('[gRPC] Received end_call signal for:', signal.end_call.call_id);
                 if (ws.readyState === 1) {
-                    ws.close(1000, 'Call ended by server');
+                    const endCallMessage = {
+                        signal: {
+                            end_call: {
+                                call_id: signal.end_call.call_id
+                            }
+                        }
+                    };
+                    // console.log('[WebSocket] Sending end_call signal to client');
+                    ws.send(JSON.stringify(endCallMessage));
+                    // Close connection after sending the message
+                    setTimeout(() => {
+                        if (ws.readyState === 1) {
+                            ws.close(1000, 'Call ended by server');
+                        }
+                    }, 100);
                 }
             } else if (signal.transfer_call) {
-                console.log('[gRPC] Received transfer_call signal');
-                // Handle call transfer if needed
+                // console.log('[gRPC] Received transfer_call signal');
+                if (ws.readyState === 1) {
+                    const transferCallMessage = {
+                        signal: {
+                            transfer_call: {
+                                call_id: signal.transfer_call.call_id,
+                                customer_phone_number: signal.transfer_call.customer_phone_number,
+                                target_staff: signal.transfer_call.target_staff || []
+                            }
+                        }
+                    };
+                    // console.log('[WebSocket] Sending transfer_call signal to client');
+                    ws.send(JSON.stringify(transferCallMessage));
+                }
+            } else {
+                // Other signal types
+                if (ws.readyState === 1) {
+                    ws.send(JSON.stringify({ signal: signal }));
+                }
             }
         }
     });
@@ -158,10 +186,10 @@ wss.on('connection', (ws, request) => {
         try {
             if (!isBinary) {
                 const message = JSON.parse(data.toString());
-                console.log('[WebSocket] Received message type:', Object.keys(message)[0]);
+                // console.log('[WebSocket] Received message type:', Object.keys(message)[0]);
 
                 if (message.initial_info) {
-                    console.log('[gRPC] Sending InitialInfo to gRPC');
+                    // console.log('[gRPC] Sending InitialInfo to gRPC');
                     const initialRequest = {
                         status: true,
                         initial_info: message.initial_info
@@ -196,10 +224,10 @@ wss.on('connection', (ws, request) => {
                         }
                     };
 
-                    console.log(`[gRPC] Sending audio chunk: ${audioContent.length} bytes (chunk #${audioChunkCount++})`);
+                    // console.log(`[gRPC] Sending audio chunk: ${audioContent.length} bytes (chunk #${audioChunkCount++})`);
                     stream.write(clientRequest);
                 } else if (message.disconnect) {
-                    console.log('[gRPC] Sending disconnect message');
+                    // console.log('[gRPC] Sending disconnect message');
                     const disconnectRequest = {
                         status: true,
                         disconnect: message.disconnect
@@ -207,7 +235,7 @@ wss.on('connection', (ws, request) => {
                     stream.write(disconnectRequest);
                 }
             } else {
-                console.log('[WebSocket] Received binary data, ignoring (expecting JSON)');
+                // console.log('[WebSocket] Received binary data, ignoring (expecting JSON)');
             }
         } catch (err) {
             console.error('[WebSocket] Error processing message:', err.message);
@@ -224,7 +252,7 @@ wss.on('connection', (ws, request) => {
                 disconnect: {}
             };
 
-            console.log('[gRPC] Sending disconnect message');
+            // console.log('[gRPC] Sending disconnect message');
             try {
                 stream.write(disconnectRequest);
             } catch (err) {

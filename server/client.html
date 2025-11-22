@@ -127,8 +127,15 @@
             } else if (message.signal) {
               console.log('ℹ️ Received signal:', message.signal);
               if (message.signal.end_call) {
-                console.log('Call ended by server');
-                ws.close();
+                console.log('📴 Call ended by server. Call ID:', message.signal.end_call.call_id);
+                // Stop recording
+                isRecording = false;
+                document.getElementById('stop').click();
+              } else if (message.signal.transfer_call) {
+                console.log('↪️  Call transfer signal received');
+                const transferInfo = message.signal.transfer_call;
+                console.log('   Target staff:', transferInfo.target_staff);
+                alert('Call is being transferred to: ' + (transferInfo.target_staff?.map(s => s.name).join(', ') || 'available staff'));
               }
             }
           } catch (err) {
