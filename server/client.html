@@ -40,11 +40,26 @@
         console.log('Connecting to:', wsUrl);
 
         ws = new WebSocket(wsUrl);
-        ws.binaryType = 'arraybuffer';
+        // ws.binaryType = 'arraybuffer'; // We are using JSON now
         
         ws.onopen = () => {
           console.log('✅ WebSocket Connected');
           document.getElementById('status').textContent = 'Connected';
+          
+          // Send InitialInfo
+          const initialInfo = {
+            initial_info: {
+              workspace_id: 'workspace_001', // Should match server config or be dynamic
+              call_id: callId,
+              customer_phone_number: phone,
+              type_call: 'inbound',
+              hotline: '+84987654321',
+              url_audio_file: ""
+            }
+          };
+          console.log('📤 Sending InitialInfo:', initialInfo);
+          ws.send(JSON.stringify(initialInfo));
+
           resolve();
         };
         
@@ -64,14 +79,26 @@
 
         // Receive ServerAudioChunk from gRPC server
         ws.onmessage = async (e) => {
-          if (e.data instanceof ArrayBuffer) {
-            console.log('✅ Received audio chunk from server:', e.data.byteLength, 'bytes');
+          try {
+            const message = JSON.parse(e.data);
             
-            if (!audioCtx) return;
+            if (message.audio_output) {
+              const base64Audio = message.audio_output.audio_content;
+              // Decode Base64 to ArrayBuffer
+              const binaryString = window.atob(base64Audio);
+              const len = binaryString.length;
+              const bytes = new Uint8Array(len);
+              for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              const audioData = bytes.buffer;
 
-            try {
+              console.log('✅ Received audio chunk from server:', audioData.byteLength, 'bytes');
+              
+              if (!audioCtx) return;
+
               // Convert Int16 PCM to Float32
-              const int16Data = new Int16Array(e.data);
+              const int16Data = new Int16Array(audioData);
               const float32Data = new Float32Array(int16Data.length);
               
               for (let i = 0; i < int16Data.length; i++) {
@@ -89,18 +116,23 @@
               source.connect(audioCtx.destination);
 
               // Schedule playback
-              // Ensure we don't schedule in the past, but also try to keep it continuous
               const currentTime = audioCtx.currentTime;
               if (nextStartTime < currentTime) {
-                nextStartTime = currentTime + 0.05; // Add a small buffer if we fell behind
+                nextStartTime = currentTime + 0.05;
               }
               
               source.start(nextStartTime);
               nextStartTime += audioBuffer.duration;
-              
-            } catch (err) {
-              console.error('Error playing audio chunk:', err);
+
+            } else if (message.signal) {
+              console.log('ℹ️ Received signal:', message.signal);
+              if (message.signal.end_call) {
+                console.log('Call ended by server');
+                ws.close();
+              }
             }
+          } catch (err) {
+            console.error('Error processing message:', err);
           }
         };
       });
@@ -192,10 +224,36 @@
         audioWorkletNode.port.onmessage = (e) => {
           if (!isRecording) return;
           
-          // Send raw binary PCM data via WebSocket
           if (ws && ws.readyState === WebSocket.OPEN && e.data.audio && e.data.audio.byteLength > 0) {
-            console.log('📤 Sending audio to server:', e.data.audio.byteLength, 'bytes');
-            ws.send(e.data.audio);
+            // Convert Float32 to Int16
+            const float32Data = new Float32Array(e.data.audio);
+            const int16Data = new Int16Array(float32Data.length);
+            for (let i = 0; i < float32Data.length; i++) {
+                const s = Math.max(-1, Math.min(1, float32Data[i]));
+                int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+
+            // Convert Int16 buffer to Base64
+            let binary = '';
+            const bytes = new Uint8Array(int16Data.buffer);
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            const base64Audio = window.btoa(binary);
+
+            const message = {
+                play_audio: {
+                    sample_rate: 16000,
+                    sample_width: 16,
+                    num_channels: 1,
+                    duration: int16Data.length / 16000,
+                    audio_content: base64Audio
+                }
+            };
+
+            console.log('📤 Sending audio chunk:', int16Data.byteLength, 'bytes');
+            ws.send(JSON.stringify(message));
           }
         };
         

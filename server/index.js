@@ -110,6 +110,11 @@ wss.on('connection', (ws, request) => {
             // Error response
             if (serverResponse.error) {
                 console.error('[gRPC] Error:', serverResponse.error.message);
+                if (ws.readyState === 1) {
+                    ws.send(JSON.stringify({
+                        error: serverResponse.error
+                    }));
+                }
             }
             return;
         }
@@ -120,11 +125,22 @@ wss.on('connection', (ws, request) => {
             console.log(`[gRPC] Received audio output: ${audioChunk.audio_content.length} bytes`);
 
             if (ws.readyState === 1) { // OPEN
-                ws.send(audioChunk.audio_content, { binary: true });
+                // Convert Buffer to Base64
+                const base64Audio = audioChunk.audio_content.toString('base64');
+                const responseMessage = {
+                    audio_output: {
+                        audio_content: base64Audio
+                    }
+                };
+                ws.send(JSON.stringify(responseMessage));
                 console.log(`[WebSocket] Sent audio chunk to client: ${audioChunk.audio_content.length} bytes`);
             }
         } else if (serverResponse.signal) {
             const signal = serverResponse.signal;
+            if (ws.readyState === 1) {
+                ws.send(JSON.stringify({ signal: signal }));
+            }
+
             if (signal.end_call) {
                 console.log('[gRPC] Received end_call signal for:', signal.end_call.call_id);
                 if (ws.readyState === 1) {
@@ -137,77 +153,64 @@ wss.on('connection', (ws, request) => {
         }
     });
 
-    // Send InitialInfo immediately
-    console.log('[gRPC] Sending InitialInfo to gRPC (first message)');
-
-    // Create ClientRequest with InitialInfo
-    const initialRequest = {
-        status: true,
-        initial_info: {
-            workspace_id: WORKSPACE_ID,
-            call_id: callId,
-            customer_phone_number: customerPhoneNumber,
-            type_call: 'inbound',
-            hotline: HOTLINE,
-            url_audio_file: ""
-        }
-    };
-    console.log('[gRPC] InitialInfo request:', JSON.stringify(initialRequest, null, 2));
-
-    try {
-        stream.write(initialRequest);
-        callInitialized = true;
-        console.log('[gRPC] ✓ InitialInfo sent successfully');
-    } catch (err) {
-        console.error('[gRPC] ✗ Error writing InitialInfo:', err.message);
-        if (ws.readyState === 1) {
-            ws.close(1011, 'Failed to send InitialInfo to gRPC');
-        }
-    }
-
     // WebSocket → gRPC (receive client messages)
     ws.on('message', (data, isBinary) => {
-        if (isBinary && data instanceof Buffer) {
-            // Only send if stream is initialized
-            if (!callInitialized) {
-                console.log('[WebSocket] ⚠ Stream not initialized yet, discarding audio chunk');
-                return;
-            }
+        try {
+            if (!isBinary) {
+                const message = JSON.parse(data.toString());
+                console.log('[WebSocket] Received message type:', Object.keys(message)[0]);
 
-            // Send audio chunk
-            console.log(`[WebSocket] Received audio: ${data.length} bytes`);
+                if (message.initial_info) {
+                    console.log('[gRPC] Sending InitialInfo to gRPC');
+                    const initialRequest = {
+                        status: true,
+                        initial_info: message.initial_info
+                    };
+                    // Ensure required fields are present or fallback to URL params
+                    if (!initialRequest.initial_info.call_id) initialRequest.initial_info.call_id = callId;
+                    if (!initialRequest.initial_info.customer_phone_number) initialRequest.initial_info.customer_phone_number = customerPhoneNumber;
+                    if (!initialRequest.initial_info.workspace_id) initialRequest.initial_info.workspace_id = WORKSPACE_ID;
+                    if (!initialRequest.initial_info.hotline) initialRequest.initial_info.hotline = HOTLINE;
 
-            // Convert Float32 (from client) to Int16 (for gRPC)
-            // Data is Float32 (4 bytes), so length/4 = number of samples
-            const float32Buffer = new Float32Array(data.buffer, data.byteOffset, data.length / 4);
-            const int16Buffer = new Int16Array(float32Buffer.length);
+                    console.log('[gRPC] InitialInfo request:', JSON.stringify(initialRequest, null, 2));
+                    stream.write(initialRequest);
+                    callInitialized = true;
+                } else if (message.play_audio) {
+                    if (!callInitialized) {
+                        console.log('[WebSocket] ⚠ Stream not initialized yet, discarding audio chunk');
+                        return;
+                    }
 
-            for (let i = 0; i < float32Buffer.length; i++) {
-                const s = Math.max(-1, Math.min(1, float32Buffer[i]));
-                int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            }
+                    const playAudio = message.play_audio;
+                    // Decode Base64 to Buffer
+                    const audioContent = Buffer.from(playAudio.audio_content, 'base64');
 
-            const audioContent = Buffer.from(int16Buffer.buffer);
+                    const clientRequest = {
+                        status: true,
+                        play_audio: {
+                            sample_rate: playAudio.sample_rate || 16000,
+                            sample_width: playAudio.sample_width || 16,
+                            num_channels: playAudio.num_channels || 1,
+                            duration: playAudio.duration || (audioContent.length / (16000 * 2)),
+                            audio_content: audioContent
+                        }
+                    };
 
-            const clientRequest = {
-                status: true,
-                play_audio: {
-                    sample_rate: 16000,
-                    sample_width: 16,
-                    num_channels: 1,
-                    duration: audioContent.length / (16000 * 2), // Int16 = 2 bytes per sample
-                    audio_content: audioContent
+                    console.log(`[gRPC] Sending audio chunk: ${audioContent.length} bytes (chunk #${audioChunkCount++})`);
+                    stream.write(clientRequest);
+                } else if (message.disconnect) {
+                    console.log('[gRPC] Sending disconnect message');
+                    const disconnectRequest = {
+                        status: true,
+                        disconnect: message.disconnect
+                    };
+                    stream.write(disconnectRequest);
                 }
-            };
-
-            console.log(`[gRPC] Sending audio chunk: ${audioContent.length} bytes (chunk #${audioChunkCount++})`);
-            try {
-                stream.write(clientRequest);
-            } catch (err) {
-                console.error('[gRPC] Error sending audio chunk:', err.message);
+            } else {
+                console.log('[WebSocket] Received binary data, ignoring (expecting JSON)');
             }
-        } else {
-            console.log('[WebSocket] Received non-binary data, ignoring');
+        } catch (err) {
+            console.error('[WebSocket] Error processing message:', err.message);
         }
     });
 
