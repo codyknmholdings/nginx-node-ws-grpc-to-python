@@ -283,6 +283,15 @@
     document.getElementById('stop').onclick = () => {
       isRecording = false;
       
+      // Send disconnect message to server before closing WebSocket
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const disconnectMessage = {
+          disconnect: {}
+        };
+        console.log('📤 Sending disconnect message');
+        ws.send(JSON.stringify(disconnectMessage));
+      }
+      
       // Reset volume meter
       const level = document.getElementById('mic-level');
       if (level) {
