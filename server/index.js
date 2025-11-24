@@ -120,6 +120,13 @@ wss.on('connection', (ws, request) => {
                     ws.send(JSON.stringify({
                         error: serverResponse.error
                     }));
+
+                    // Close connection if gRPC reports error (e.g. initial_info failed)
+                    setTimeout(() => {
+                        if (ws.readyState === 1) {
+                            ws.close(1008, `gRPC logic error: ${serverResponse.error.message}`);
+                        }
+                    }, 100);
                 }
             }
             return;
