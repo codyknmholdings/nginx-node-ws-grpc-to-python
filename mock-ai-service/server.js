@@ -112,7 +112,8 @@ function streamCall(call) {
 
             if (audio.audio_content && audio.audio_content.length > 0) {
                 if (fd) {
-                    const buffer = audio.audio_content;
+                    // audio.audio_content is now a Base64 string
+                    const buffer = Buffer.from(audio.audio_content, 'base64');
                     fs.writeSync(fd, buffer, 0, buffer.length, null); // null position = append
                     totalBytesWritten += buffer.length;
                     // console.log(`[gRPC] Wrote ${buffer.length} bytes`);

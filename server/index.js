@@ -138,8 +138,8 @@ wss.on('connection', (ws, request) => {
             // console.log(`[gRPC] Received audio output: ${audioChunk.audio_content.length} bytes`);
 
             if (ws.readyState === 1) { // OPEN
-                // Convert Buffer to Base64
-                const base64Audio = audioChunk.audio_content.toString('base64');
+                // audioChunk.audio_content is already Base64 string
+                const base64Audio = audioChunk.audio_content;
                 const responseMessage = {
                     ws_audio_output: {
                         audio_content: base64Audio
@@ -235,7 +235,7 @@ wss.on('connection', (ws, request) => {
                             sample_width: audioInput.sample_width || 16,
                             num_channels: audioInput.num_channels || 1,
                             duration: audioInput.duration || (audioContent.length / (16000 * 2)),
-                            audio_content: audioContent
+                            audio_content: audioInput.audio_content
                         }
                     };
 
