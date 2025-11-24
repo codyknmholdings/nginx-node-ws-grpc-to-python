@@ -47,7 +47,7 @@ message ClientAudioChunk {
   int32 sample_width = 2;
   int32 num_channels = 3;
   float duration = 4;
-  bytes audio_content = 5; // Gửi raw bytes (không cần base64 khi dùng gRPC để tối ưu)
+  string audio_content = 5; // Base64 encoded audio data
 }
 
 message DisconnectMessage {}
@@ -69,7 +69,7 @@ message ServerAudioChunk {
   int32 sample_width = 2;
   int32 num_channels = 3;
   float duration = 4;
-  bytes audio_content = 5;
+  string audio_content = 5; // Base64 encoded audio data
 }
 
 message SignalMessage {

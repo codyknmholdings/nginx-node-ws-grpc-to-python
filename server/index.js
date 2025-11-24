@@ -129,18 +129,17 @@ wss.on('connection', (ws, request) => {
         // Handle different response types
         if (serverResponse.audio_output) {
             const audioChunk = serverResponse.audio_output;
-            // console.log(`[gRPC] Received audio output: ${audioChunk.audio_content.length} bytes`);
+            // console.log(`[gRPC] Received audio output`);
 
             if (ws.readyState === 1) { // OPEN
-                // Convert Buffer to Base64
-                const base64Audio = audioChunk.audio_content.toString('base64');
+                // audio_content is already base64 string from proto
                 const responseMessage = {
                     audio_output: {
-                        audio_content: base64Audio
+                        audio_content: audioChunk.audio_content
                     }
                 };
                 ws.send(JSON.stringify(responseMessage));
-                // console.log(`[WebSocket] Sent audio chunk to client: ${audioChunk.audio_content.length} bytes`);
+                // console.log(`[WebSocket] Sent audio chunk to client`);
             }
         } else if (serverResponse.signal) {
             const signal = serverResponse.signal;
@@ -217,8 +216,7 @@ wss.on('connection', (ws, request) => {
                     }
 
                     const playAudio = message.play_audio;
-                    // Decode Base64 to Buffer
-                    const audioContent = Buffer.from(playAudio.audio_content, 'base64');
+                    // audio_content is already base64 string from proto
 
                     const clientRequest = {
                         status: true,
@@ -226,12 +224,12 @@ wss.on('connection', (ws, request) => {
                             sample_rate: playAudio.sample_rate || 16000,
                             sample_width: playAudio.sample_width || 16,
                             num_channels: playAudio.num_channels || 1,
-                            duration: playAudio.duration || (audioContent.length / (16000 * 2)),
-                            audio_content: audioContent
+                            duration: playAudio.duration || 0,
+                            audio_content: playAudio.audio_content
                         }
                     };
 
-                    // console.log(`[gRPC] Sending audio chunk: ${audioContent.length} bytes (chunk #${audioChunkCount++})`);
+                    // console.log(`[gRPC] Sending audio chunk (chunk #${audioChunkCount++})`);
                     stream.write(clientRequest);
                 } else if (message.disconnect) {
                     // console.log('[gRPC] Sending disconnect message');
