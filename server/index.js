@@ -142,11 +142,12 @@ wss.on('connection', (ws, request) => {
                 const base64Audio = audioChunk.audio_content;
                 const responseMessage = {
                     ws_audio_output: {
-                        audio_content: base64Audio
+                        audio_content: base64Audio,
+                        sample_rate: audioChunk.sample_rate || 16000
                     }
                 };
                 ws.send(JSON.stringify(responseMessage));
-                // console.log(`[WebSocket] Sent audio chunk to client: ${audioChunk.audio_content.length} bytes`);
+                // console.log(`[WebSocket] Sent audio chunk to client: ${audioChunk.audio_content.length} bytes, rate: ${audioChunk.sample_rate}`);
             }
         } else if (serverResponse.signal) {
             const signal = serverResponse.signal;

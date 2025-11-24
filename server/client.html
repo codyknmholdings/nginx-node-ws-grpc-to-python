@@ -113,6 +113,7 @@
 
               // Create AudioBuffer
               const sampleRate = message.ws_audio_output.sample_rate || 16000;
+              console.log(`✅ Received audio chunk: ${audioData.byteLength} bytes, Rate: ${sampleRate}Hz`);
               const audioBuffer = audioCtx.createBuffer(1, float32Data.length, sampleRate);
               audioBuffer.getChannelData(0).set(float32Data);
 
