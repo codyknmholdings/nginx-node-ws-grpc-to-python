@@ -15,7 +15,7 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 const voiceProto = grpc.loadPackageDefinition(packageDefinition).live_call;
 
 // Configuration
-const PORT = '50051';
+const PORT = process.env.PORT || '50051';
 const RECORDINGS_DIR = path.join(__dirname, 'recordings');
 
 // Ensure recordings directory exists
