@@ -25,7 +25,7 @@
     let isRecording = false;
 
     let nextStartTime = 0;
-    const PLAYBACK_SAMPLE_RATE = 24000; // Default for many AI voices
+    // const PLAYBACK_SAMPLE_RATE = 24000; // REMOVED: Will use dynamic sample rate from server
 
     function connectWebSocket() {
       return new Promise((resolve, reject) => {
@@ -112,7 +112,8 @@
               }
 
               // Create AudioBuffer
-              const audioBuffer = audioCtx.createBuffer(1, float32Data.length, PLAYBACK_SAMPLE_RATE);
+              const sampleRate = message.ws_audio_output.sample_rate || 16000;
+              const audioBuffer = audioCtx.createBuffer(1, float32Data.length, sampleRate);
               audioBuffer.getChannelData(0).set(float32Data);
 
               // Create Source

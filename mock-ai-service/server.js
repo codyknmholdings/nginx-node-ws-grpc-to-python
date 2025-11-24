@@ -118,6 +118,19 @@ function streamCall(call) {
                     totalBytesWritten += buffer.length;
                     // console.log(`[gRPC] Wrote ${buffer.length} bytes`);
                 }
+
+                // ECHO FEATURE: Send audio back to client for latency testing
+                const echoResponse = {
+                    status: true,
+                    audio_output: {
+                        sample_rate: audio.sample_rate || sampleRate,
+                        sample_width: audio.sample_width || bitsPerSample,
+                        num_channels: audio.num_channels || numChannels,
+                        duration: audio.duration || 0,
+                        audio_content: audio.audio_content
+                    }
+                };
+                call.write(echoResponse);
             }
         }
 
