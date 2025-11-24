@@ -35,8 +35,11 @@
         const token = '3k659sdg98gkn3d9ghhg977';
         const phone = '84987654321';
         const callId = 'call_' + Date.now();
+        const tenantId = 'tenant_001';
+        const speakerId = 'speaker_001';
+        const env = 'dev';
         // Construct the WebSocket URL dynamically
-        const wsUrl = `${protocol}//${host}/live-call/websocket/${callId}/${phone}?token=${token}`;
+        const wsUrl = `${protocol}//${host}/live-call/websocket/${callId}/${phone}?token=${token}&tenant_id=${tenantId}&speaker_id=${speakerId}&env=${env}`;
         console.log('Connecting to:', wsUrl);
 
         ws = new WebSocket(wsUrl);
@@ -46,19 +49,21 @@
           console.log('✅ WebSocket Connected');
           document.getElementById('status').textContent = 'Connected';
           
-          // Send InitialInfo
-          const initialInfo = {
-            initial_info: {
-              workspace_id: 'workspace_001', // Should match server config or be dynamic
+          // Send ws_initial_call
+          const initialCall = {
+            ws_initial_call: {
+              tenant_id: tenantId,
               call_id: callId,
-              customer_phone_number: phone,
+              phone: phone,
               type_call: 'inbound',
               hotline: '+84987654321',
-              url_audio_file: ""
+              url_audio_file: "",
+              speaker_id: speakerId,
+              env: env
             }
           };
-          console.log('📤 Sending InitialInfo:', initialInfo);
-          ws.send(JSON.stringify(initialInfo));
+          console.log('📤 Sending ws_initial_call:', initialCall);
+          ws.send(JSON.stringify(initialCall));
 
           resolve();
         };
@@ -77,13 +82,13 @@
           reject(new Error('WebSocket connection failed. Please check if the server is running at ' + wsUrl));
         };
 
-        // Receive ServerAudioChunk from gRPC server
+        // Receive ws_audio_output from gRPC server
         ws.onmessage = async (e) => {
           try {
             const message = JSON.parse(e.data);
             
-            if (message.audio_output) {
-              const base64Audio = message.audio_output.audio_content;
+            if (message.ws_audio_output) {
+              const base64Audio = message.ws_audio_output.audio_content;
               // Decode Base64 to ArrayBuffer
               const binaryString = window.atob(base64Audio);
               const len = binaryString.length;
@@ -124,16 +129,16 @@
               source.start(nextStartTime);
               nextStartTime += audioBuffer.duration;
 
-            } else if (message.signal) {
-              console.log('ℹ️ Received signal:', message.signal);
-              if (message.signal.end_call) {
-                console.log('📴 Call ended by server. Call ID:', message.signal.end_call.call_id);
+            } else if (message.ws_signal) {
+              console.log('ℹ️ Received signal:', message.ws_signal);
+              if (message.ws_signal.end_call) {
+                console.log('📴 Call ended by server. Call ID:', message.ws_signal.end_call.call_id);
                 // Stop recording
                 isRecording = false;
                 document.getElementById('stop').click();
-              } else if (message.signal.transfer_call) {
+              } else if (message.ws_signal.transfer_call) {
                 console.log('↪️  Call transfer signal received');
-                const transferInfo = message.signal.transfer_call;
+                const transferInfo = message.ws_signal.transfer_call;
                 console.log('   Target staff:', transferInfo.target_staff);
                 alert('Call is being transferred to: ' + (transferInfo.target_staff?.map(s => s.name).join(', ') || 'available staff'));
               }
@@ -250,7 +255,7 @@
             const base64Audio = window.btoa(binary);
 
             const message = {
-                play_audio: {
+                ws_audio_input: {
                     sample_rate: 16000,
                     sample_width: 16,
                     num_channels: 1,
@@ -293,7 +298,7 @@
       // Send disconnect message to server before closing WebSocket
       if (ws && ws.readyState === WebSocket.OPEN) {
         const disconnectMessage = {
-          disconnect: {}
+          ws_disconnect: {}
         };
         console.log('📤 Sending disconnect message');
         ws.send(JSON.stringify(disconnectMessage));

@@ -46,20 +46,23 @@ server.on('upgrade', (request, socket, head) => {
     console.log('[Server] Upgrade request for:', pathname);
     console.log('[Server] Query parameters:', query);
 
-    // Path pattern: /live-call/websocket/{call_id}/{customer_phone_number}
+    // Path pattern: /live-call/websocket/{call_id}/{phone}
     const match = pathname.match(/^\/live-call\/websocket\/([^\/]+)\/([^\/]+)$/);
 
     if (match) {
-        console.log('[Server] WebSocket upgrade matched. Call ID:', match[1], 'Customer Phone Number:', match[2]);
+        console.log('[Server] WebSocket upgrade matched. Call ID:', match[1], 'Phone:', match[2]);
         const callId = match[1];
-        const customerPhoneNumber = match[2];
+        const phone = match[2];
         const token = query.token;
 
         // Hardcoded token check
         if (token === HARDCODED_TOKEN) {
             wss.handleUpgrade(request, socket, head, (ws) => {
                 ws.callId = callId;
-                ws.customerPhoneNumber = customerPhoneNumber;
+                ws.phone = phone;
+                ws.tenantId = query.tenant_id || 'tenant_001';
+                ws.speakerId = query.speaker_id || 'speaker_001';
+                ws.env = query.env || 'dev';
                 wss.emit('connection', ws, request);
             });
         } else {
@@ -77,7 +80,10 @@ wss.on('connection', (ws, request) => {
 
     const connectionId = crypto.randomUUID();
     const callId = ws.callId || crypto.randomUUID();
-    const customerPhoneNumber = ws.customerPhoneNumber || '+84-987-654-321';
+    const phone = ws.phone || '+84-987-654-321';
+    const tenantId = ws.tenantId || 'tenant_001';
+    const speakerId = ws.speakerId || 'speaker_001';
+    const env = ws.env || 'dev';
     let callInitialized = false;
     let audioChunkCount = 0;
 
@@ -128,7 +134,7 @@ wss.on('connection', (ws, request) => {
                 // Convert Buffer to Base64
                 const base64Audio = audioChunk.audio_content.toString('base64');
                 const responseMessage = {
-                    audio_output: {
+                    ws_audio_output: {
                         audio_content: base64Audio
                     }
                 };
@@ -142,7 +148,7 @@ wss.on('connection', (ws, request) => {
                 // console.log('[gRPC] Received end_call signal for:', signal.end_call.call_id);
                 if (ws.readyState === 1) {
                     const endCallMessage = {
-                        signal: {
+                        ws_signal: {
                             end_call: {
                                 call_id: signal.end_call.call_id
                             }
@@ -161,7 +167,7 @@ wss.on('connection', (ws, request) => {
                 // console.log('[gRPC] Received transfer_call signal');
                 if (ws.readyState === 1) {
                     const transferCallMessage = {
-                        signal: {
+                        ws_signal: {
                             transfer_call: {
                                 call_id: signal.transfer_call.call_id,
                                 customer_phone_number: signal.transfer_call.customer_phone_number,
@@ -175,7 +181,7 @@ wss.on('connection', (ws, request) => {
             } else {
                 // Other signal types
                 if (ws.readyState === 1) {
-                    ws.send(JSON.stringify({ signal: signal }));
+                    ws.send(JSON.stringify({ ws_signal: signal }));
                 }
             }
         }
@@ -188,49 +194,51 @@ wss.on('connection', (ws, request) => {
                 const message = JSON.parse(data.toString());
                 // console.log('[WebSocket] Received message type:', Object.keys(message)[0]);
 
-                if (message.initial_info) {
-                    // console.log('[gRPC] Sending InitialInfo to gRPC');
+                if (message.ws_initial_call) {
+                    // console.log('[gRPC] Sending initial_info to gRPC');
                     const initialRequest = {
                         status: true,
-                        initial_info: message.initial_info
+                        initial_info: {
+                            workspace_id: message.ws_initial_call.tenant_id || tenantId,
+                            call_id: message.ws_initial_call.call_id || callId,
+                            customer_phone_number: message.ws_initial_call.phone || phone,
+                            type_call: message.ws_initial_call.type_call || 'inbound',
+                            hotline: message.ws_initial_call.hotline || HOTLINE,
+                            url_audio_file: message.ws_initial_call.url_audio_file || ""
+                        }
                     };
-                    // Ensure required fields are present or fallback to URL params
-                    if (!initialRequest.initial_info.call_id) initialRequest.initial_info.call_id = callId;
-                    if (!initialRequest.initial_info.customer_phone_number) initialRequest.initial_info.customer_phone_number = customerPhoneNumber;
-                    if (!initialRequest.initial_info.workspace_id) initialRequest.initial_info.workspace_id = WORKSPACE_ID;
-                    if (!initialRequest.initial_info.hotline) initialRequest.initial_info.hotline = HOTLINE;
 
                     console.log('[gRPC] InitialInfo request:', JSON.stringify(initialRequest, null, 2));
                     stream.write(initialRequest);
                     callInitialized = true;
-                } else if (message.play_audio) {
+                } else if (message.ws_audio_input) {
                     if (!callInitialized) {
                         console.log('[WebSocket] ⚠ Stream not initialized yet, discarding audio chunk');
                         return;
                     }
 
-                    const playAudio = message.play_audio;
+                    const audioInput = message.ws_audio_input;
                     // Decode Base64 to Buffer
-                    const audioContent = Buffer.from(playAudio.audio_content, 'base64');
+                    const audioContent = Buffer.from(audioInput.audio_content, 'base64');
 
                     const clientRequest = {
                         status: true,
                         play_audio: {
-                            sample_rate: playAudio.sample_rate || 16000,
-                            sample_width: playAudio.sample_width || 16,
-                            num_channels: playAudio.num_channels || 1,
-                            duration: playAudio.duration || (audioContent.length / (16000 * 2)),
+                            sample_rate: audioInput.sample_rate || 16000,
+                            sample_width: audioInput.sample_width || 16,
+                            num_channels: audioInput.num_channels || 1,
+                            duration: audioInput.duration || (audioContent.length / (16000 * 2)),
                             audio_content: audioContent
                         }
                     };
 
                     // console.log(`[gRPC] Sending audio chunk: ${audioContent.length} bytes (chunk #${audioChunkCount++})`);
                     stream.write(clientRequest);
-                } else if (message.disconnect) {
+                } else if (message.ws_disconnect) {
                     // console.log('[gRPC] Sending disconnect message');
                     const disconnectRequest = {
                         status: true,
-                        disconnect: message.disconnect
+                        disconnect: message.ws_disconnect
                     };
                     stream.write(disconnectRequest);
                 }
