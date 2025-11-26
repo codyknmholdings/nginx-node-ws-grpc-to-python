@@ -94,6 +94,24 @@ wss.on('connection', (ws, request) => {
         }
     });
 
+    // Send initial_info immediately upon connection
+    console.log('[gRPC] Sending initial_info to gRPC (Auto-init)');
+    const initialRequest = {
+        status: true,
+        initial_info: {
+            workspace_id: tenantId,
+            call_id: callId,
+            customer_phone_number: phone,
+            type_call: 'inbound',
+            hotline: HOTLINE,
+            url_audio_file: ""
+        }
+    };
+
+    console.log('[gRPC] InitialInfo request:', JSON.stringify(initialRequest, null, 2));
+    stream.write(initialRequest);
+    callInitialized = true;
+
     // Log stream events
     // stream.on('prolog', () => console.log('[gRPC] Stream prolog'));
     // stream.on('headers', (headers) => console.log('[gRPC] Stream headers received'));
@@ -202,24 +220,7 @@ wss.on('connection', (ws, request) => {
                 const message = JSON.parse(data.toString());
                 // console.log('[WebSocket] Received message type:', Object.keys(message)[0]);
 
-                if (message.ws_initial_call) {
-                    // console.log('[gRPC] Sending initial_info to gRPC');
-                    const initialRequest = {
-                        status: true,
-                        initial_info: {
-                            workspace_id: message.ws_initial_call.tenant_id || tenantId,
-                            call_id: message.ws_initial_call.call_id || callId,
-                            customer_phone_number: message.ws_initial_call.phone || phone,
-                            type_call: message.ws_initial_call.type_call || 'inbound',
-                            hotline: message.ws_initial_call.hotline || HOTLINE,
-                            url_audio_file: message.ws_initial_call.url_audio_file || ""
-                        }
-                    };
-
-                    console.log('[gRPC] InitialInfo request:', JSON.stringify(initialRequest, null, 2));
-                    stream.write(initialRequest);
-                    callInitialized = true;
-                } else if (message.ws_audio_input) {
+                if (message.ws_audio_input) {
                     if (!callInitialized) {
                         console.log('[WebSocket] ⚠ Stream not initialized yet, discarding audio chunk');
                         return;

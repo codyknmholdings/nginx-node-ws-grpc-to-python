@@ -48,23 +48,6 @@
         ws.onopen = () => {
           console.log('✅ WebSocket Connected');
           document.getElementById('status').textContent = 'Connected';
-          
-          // Send ws_initial_call
-          const initialCall = {
-            ws_initial_call: {
-              tenant_id: tenantId,
-              call_id: callId,
-              phone: phone,
-              type_call: 'inbound',
-              hotline: '+84987654321',
-              url_audio_file: "",
-              speaker_id: speakerId,
-              env: env
-            }
-          };
-          console.log('📤 Sending ws_initial_call:', initialCall);
-          ws.send(JSON.stringify(initialCall));
-
           resolve();
         };
         
@@ -255,13 +238,14 @@
                 binary += String.fromCharCode(bytes[i]);
             }
             const base64Audio = window.btoa(binary);
+            const sampleRate = audioCtx.sampleRate;
 
             const message = {
                 ws_audio_input: {
-                    sample_rate: 16000,
+                    sample_rate: sampleRate,
                     sample_width: 16,
                     num_channels: 1,
-                    duration: int16Data.length / 16000,
+                    duration: int16Data.length / sampleRate,
                     audio_content: base64Audio
                 }
             };
