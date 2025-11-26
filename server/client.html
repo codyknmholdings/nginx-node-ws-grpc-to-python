@@ -66,14 +66,16 @@
           reject(new Error('WebSocket connection failed. Please check if the server is running at ' + wsUrl));
         };
 
-        // Receive messages from server (doc v0.3 format)
+        // Receive messages from server (new format)
         ws.onmessage = async (e) => {
           try {
             const message = JSON.parse(e.data);
             
-            // Handle audio_output (doc v0.3)
-            if (message.audio_output) {
-              const base64Audio = message.audio_output.audio_content;
+            // Handle playAudio message
+            if (message.type === 'playAudio') {
+              const audioData = message.data;
+              const base64Audio = audioData.audioContent;
+              
               // Decode Base64 to ArrayBuffer
               const binaryString = window.atob(base64Audio);
               const len = binaryString.length;
@@ -81,14 +83,15 @@
               for (let i = 0; i < len; i++) {
                 bytes[i] = binaryString.charCodeAt(i);
               }
-              const audioData = bytes.buffer;
+              const pcmData = bytes.buffer;
 
-              console.log('✅ Received audio chunk from server:', audioData.byteLength, 'bytes');
+              const sampleRate = audioData.sampleRate || 8000;
+              console.log(`✅ Received playAudio: ${pcmData.byteLength} bytes, Rate: ${sampleRate}Hz, Duration: ${audioData.audioDuration}s`);
               
               if (!audioCtx) return;
 
               // Convert Int16 PCM to Float32
-              const int16Data = new Int16Array(audioData);
+              const int16Data = new Int16Array(pcmData);
               const float32Data = new Float32Array(int16Data.length);
               
               for (let i = 0; i < int16Data.length; i++) {
@@ -96,9 +99,7 @@
                 float32Data[i] = int16Data[i] / 32768.0;
               }
 
-              // Create AudioBuffer - server resamples to 8kHz before sending
-              const sampleRate = 8000;
-              console.log(`✅ Received audio chunk: ${audioData.byteLength} bytes, Rate: ${sampleRate}Hz`);
+              // Create AudioBuffer
               const audioBuffer = audioCtx.createBuffer(1, float32Data.length, sampleRate);
               audioBuffer.getChannelData(0).set(float32Data);
 
@@ -117,28 +118,25 @@
               nextStartTime += audioBuffer.duration;
 
             }
-            // Handle signal messages (doc v0.3)
-            else if (message.signal) {
-              console.log('ℹ️ Received signal:', message.signal);
-              
-              // Handle end_call signal
-              if (message.signal.end_call) {
-                console.log('📴 Call ended by server. Call ID:', message.signal.end_call.call_id);
-                isRecording = false;
-                document.getElementById('stop').click();
-              }
-              // Handle transfer_call signal
-              else if (message.signal.transfer_call) {
-                console.log('↪️  Call transfer signal received');
-                const transferInfo = message.signal.transfer_call;
-                console.log('   Target staff:', transferInfo.target_staff);
-                alert('Call is being transferred to: ' + (transferInfo.target_staff?.map(s => s.name).join(', ') || 'available staff'));
-              }
-              // Handle error signal
-              else if (message.signal.error_code) {
-                console.error('❌ Server error:', message.signal.message, '(code:', message.signal.error_code, ')');
-                alert('Server error: ' + message.signal.message);
-              }
+            // Handle transfer message
+            else if (message.type === 'transfer') {
+              console.log('↪️  Transfer signal received, SIP:', message.sip_number);
+              alert('Call is being transferred to SIP: ' + message.sip_number);
+            }
+            // Handle disconnect message
+            else if (message.type === 'disconnect') {
+              console.log('📴 Disconnect signal received from server');
+              isRecording = false;
+              document.getElementById('stop').click();
+            }
+            // Handle error message
+            else if (message.type === 'error') {
+              console.error('❌ Server error:', message.data?.message, '(code:', message.data?.error_code, ')');
+              alert('Server error: ' + (message.data?.message || 'Unknown error'));
+            }
+            // Handle unknown message types
+            else {
+              console.log('ℹ️ Received message:', message);
             }
           } catch (err) {
             console.error('Error processing message:', err);
@@ -245,29 +243,9 @@
                 int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
             }
 
-            // Convert Int16 buffer to Base64
-            let binary = '';
-            const bytes = new Uint8Array(int16Data.buffer);
-            const len = bytes.byteLength;
-            for (let i = 0; i < len; i++) {
-                binary += String.fromCharCode(bytes[i]);
-            }
-            const base64Audio = window.btoa(binary);
-
-            // Use TARGET_SAMPLE_RATE (8000Hz) - audio is already downsampled in audio-processor.js
-            // Send play_audio message (doc v0.3 format)
-            const message = {
-                play_audio: {
-                    sample_rate: TARGET_SAMPLE_RATE,
-                    sample_width: 2,  // bits (doc v0.3 uses bits, not bytes)
-                    num_channels: 1,
-                    duration: int16Data.length / TARGET_SAMPLE_RATE,
-                    audio_content: base64Audio
-                }
-            };
-
-            console.log('📤 Sending audio chunk:', int16Data.byteLength, 'bytes @', TARGET_SAMPLE_RATE, 'Hz');
-            ws.send(JSON.stringify(message));
+            // Send binary audio directly (8kHz, 16-bit, mono)
+            console.log('📤 Sending binary audio:', int16Data.byteLength, 'bytes @', TARGET_SAMPLE_RATE, 'Hz');
+            ws.send(int16Data.buffer);
           }
         };
         

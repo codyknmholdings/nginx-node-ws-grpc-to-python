@@ -176,9 +176,10 @@ wss.on('connection', (ws, request) => {
             if (serverResponse.error) {
                 console.error('[gRPC] Error:', serverResponse.error.message);
                 if (ws.readyState === 1) {
-                    // Convert gRPC error to WebSocket format (doc v0.3)
+                    // Convert gRPC error to new WebSocket format
                     ws.send(JSON.stringify({
-                        signal: {
+                        type: "error",
+                        data: {
                             error_code: serverResponse.error.error_code || 80100,
                             internal_error_code: serverResponse.error.internal_error_code || 500,
                             message: serverResponse.error.message
@@ -206,11 +207,23 @@ wss.on('connection', (ws, request) => {
                     // Resample audio from gRPC rate (24kHz) to client rate (8kHz)
                     const resampledAudio = resampleAudio(audioChunk.audio_content, inputRate, OUTPUT_SAMPLE_RATE);
 
-                    // Convert gRPC audio_output to WebSocket format (doc v0.3)
+                    // Calculate audio duration based on resampled data
+                    const resampledBuffer = Buffer.from(resampledAudio, 'base64');
+                    const numSamples = resampledBuffer.length / 2; // Int16 = 2 bytes per sample
+                    const audioDuration = numSamples / OUTPUT_SAMPLE_RATE;
+
+                    // Convert gRPC audio_output to new WebSocket format
                     const responseMessage = {
-                        audio_output: {
-                            audio_content: resampledAudio
-                        }
+                        type: "playAudio",
+                        data: {
+                            audioContentType: "raw",
+                            sampleRate: OUTPUT_SAMPLE_RATE,
+                            audioContent: resampledAudio,
+                            audioDuration: parseFloat(audioDuration.toFixed(4)),
+                            textContent: ""
+                        },
+                        final: 0,
+                        sip_number: ""
                     };
                     ws.send(JSON.stringify(responseMessage));
                     // console.log(`[WebSocket] Sent resampled audio: ${inputRate}Hz -> ${OUTPUT_SAMPLE_RATE}Hz`);
@@ -224,16 +237,12 @@ wss.on('connection', (ws, request) => {
             if (signal.end_call) {
                 // console.log('[gRPC] Received end_call signal for:', signal.end_call.call_id);
                 if (ws.readyState === 1) {
-                    // Convert gRPC signal to WebSocket format (doc v0.3)
-                    const endCallMessage = {
-                        signal: {
-                            end_call: {
-                                call_id: signal.end_call.call_id
-                            }
-                        }
+                    // Convert gRPC signal to new WebSocket format
+                    const disconnectMessage = {
+                        type: "disconnect"
                     };
-                    // console.log('[WebSocket] Sending end_call signal to client');
-                    ws.send(JSON.stringify(endCallMessage));
+                    // console.log('[WebSocket] Sending disconnect signal to client');
+                    ws.send(JSON.stringify(disconnectMessage));
                     // Close connection after sending the message
                     setTimeout(() => {
                         if (ws.readyState === 1) {
@@ -244,124 +253,88 @@ wss.on('connection', (ws, request) => {
             } else if (signal.transfer_call) {
                 // console.log('[gRPC] Received transfer_call signal');
                 if (ws.readyState === 1) {
-                    // Convert gRPC signal to WebSocket format (doc v0.3)
-                    const transferCallMessage = {
-                        signal: {
-                            transfer_call: {
-                                call_id: signal.transfer_call.call_id,
-                                customer_phone_number: signal.transfer_call.customer_phone_number,
-                                target_staff: signal.transfer_call.target_staff || []
-                            }
-                        }
+                    // Get sip_number from target_staff (first staff's extension)
+                    const targetStaff = signal.transfer_call.target_staff || [];
+                    const sipNumber = targetStaff.length > 0 ? (targetStaff[0].extension || targetStaff[0].sip_number || "") : "";
+
+                    // Convert gRPC signal to new WebSocket format
+                    const transferMessage = {
+                        type: "transfer",
+                        sip_number: sipNumber
                     };
-                    // console.log('[WebSocket] Sending transfer_call signal to client');
-                    ws.send(JSON.stringify(transferCallMessage));
+                    // console.log('[WebSocket] Sending transfer signal to client');
+                    ws.send(JSON.stringify(transferMessage));
                 }
             } else {
-                // Other signal types
+                // Other signal types - convert to appropriate format
                 if (ws.readyState === 1) {
-                    ws.send(JSON.stringify({ signal: signal }));
+                    // For unknown signals, send as-is with type wrapper
+                    ws.send(JSON.stringify({ type: "signal", data: signal }));
                 }
             }
         }
     });
 
+    // Audio configuration for binary input
+    const CLIENT_SAMPLE_RATE = 8000;  // Client sends 8kHz audio
+    const CLIENT_SAMPLE_WIDTH = 16;   // 16-bit audio
+    const CLIENT_NUM_CHANNELS = 1;    // Mono
+
     // WebSocket → gRPC (receive client messages)
     ws.on('message', (data, isBinary) => {
         try {
-            if (!isBinary) {
+            if (isBinary) {
+                // Handle binary audio data (8kHz, 16-bit, mono PCM)
+                const audioBuffer = Buffer.from(data);
+
+                // Calculate duration based on audio data size
+                // Size in bytes / 2 (16-bit = 2 bytes per sample) / sample_rate = duration in seconds
+                const numSamples = audioBuffer.length / 2;
+                const duration = numSamples / CLIENT_SAMPLE_RATE;
+
+                // Convert to base64 for gRPC
+                const base64Audio = audioBuffer.toString('base64');
+
+                // Log first few chunks for debugging
+                if (audioChunkCount < 3) {
+                    console.log(`[WebSocket] Binary audio: ${audioBuffer.length} bytes, duration=${duration.toFixed(4)}s`);
+                }
+
+                // Send to gRPC
+                const clientRequest = {
+                    status: true,
+                    play_audio: {
+                        sample_rate: CLIENT_SAMPLE_RATE,
+                        sample_width: CLIENT_SAMPLE_WIDTH,
+                        num_channels: CLIENT_NUM_CHANNELS,
+                        duration: duration,
+                        audio_content: base64Audio
+                    }
+                };
+
+                audioChunkCount++;
+                stream.write(clientRequest);
+            } else {
+                // Handle JSON messages
                 const message = JSON.parse(data.toString());
                 // console.log('[WebSocket] Received message type:', Object.keys(message)[0]);
 
-                // Handle initial_info message (doc v0.3) - IGNORED since server auto-sends it
-                if (message.initial_info) {
-                    console.log('[WebSocket] Received initial_info from client - IGNORED (server already sent it automatically)');
-                    // Do nothing - server already initialized the call
-                }
-                // Handle play_audio message (doc v0.3)
-                else if (message.play_audio) {
-                    const audioInput = message.play_audio;
-
-                    // Validate required fields
-                    if (!audioInput.audio_content) {
-                        console.error('[WebSocket] ⚠ Missing audio_content in play_audio');
-                        return;
-                    }
-
-                    // Get audio params from client (doc v0.3)
-                    const sampleRate = audioInput.sample_rate;
-                    const sampleWidth = audioInput.sample_width; // bits (16 for Int16)
-                    const numChannels = audioInput.num_channels;
-                    const duration = audioInput.duration;
-
-                    // Log first few chunks for debugging
-                    if (audioChunkCount < 3) {
-                        console.log(`[WebSocket] Audio params from client: rate=${sampleRate}, width=${sampleWidth}, channels=${numChannels}, duration=${duration?.toFixed(4)}`);
-                    }
-
-                    // Convert WebSocket play_audio to gRPC format
-                    const clientRequest = {
-                        status: true,
-                        play_audio: {
-                            sample_rate: sampleRate,
-                            sample_width: sampleWidth,
-                            num_channels: numChannels,
-                            duration: duration,
-                            audio_content: audioInput.audio_content
-                        }
-                    };
-
-                    audioChunkCount++;
-                    // console.log(`[gRPC] Sending audio chunk: ${audioContent.length} bytes (chunk #${audioChunkCount})`);
-                    stream.write(clientRequest);
-                }
-                // Handle disconnect message (doc v0.3)
-                else if (message.disconnect !== undefined) {
+                // Handle disconnect message
+                if (message.disconnect !== undefined || message.type === 'disconnect') {
                     console.log('[WebSocket] Received disconnect message from client');
-                    // Convert WebSocket disconnect to gRPC format
                     const disconnectRequest = {
                         status: true,
                         disconnect: {}
                     };
                     stream.write(disconnectRequest);
                 }
-                // Legacy support: ws_audio_input (backward compatibility)
-                else if (message.ws_audio_input) {
-                    const audioInput = message.ws_audio_input;
-
-                    if (!audioInput.audio_content) {
-                        console.error('[WebSocket] ⚠ Missing audio_content in ws_audio_input');
-                        return;
-                    }
-
-                    const clientRequest = {
-                        status: true,
-                        play_audio: {
-                            sample_rate: audioInput.sample_rate,
-                            sample_width: audioInput.sample_width,
-                            num_channels: audioInput.num_channels,
-                            duration: audioInput.duration,
-                            audio_content: audioInput.audio_content
-                        }
-                    };
-
-                    audioChunkCount++;
-                    stream.write(clientRequest);
-                }
-                // Legacy support: ws_disconnect (backward compatibility)
-                else if (message.ws_disconnect) {
-                    console.log('[WebSocket] Received ws_disconnect (legacy) message');
-                    const disconnectRequest = {
-                        status: true,
-                        disconnect: message.ws_disconnect
-                    };
-                    stream.write(disconnectRequest);
+                // Handle initial_info message - IGNORED since server auto-sends it
+                else if (message.initial_info) {
+                    console.log('[WebSocket] Received initial_info from client - IGNORED (server already sent it automatically)');
                 }
                 else {
-                    console.warn('[WebSocket] Unknown message type:', Object.keys(message)[0]);
+                    console.warn('[WebSocket] Unknown JSON message type:', Object.keys(message)[0]);
                 }
-            } else {
-                // console.log('[WebSocket] Received binary data, ignoring (expecting JSON)');
             }
         } catch (err) {
             console.error('[WebSocket] Error processing message:', err.message);
