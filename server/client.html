@@ -217,6 +217,9 @@
         // Create AudioWorklet node
         audioWorkletNode = new AudioWorkletNode(audioCtx, 'audio-capture-processor');
         
+        // Target sample rate after downsampling in audio-processor.js
+        const TARGET_SAMPLE_RATE = 8000;
+
         // Receive PCM data from worklet and send to server
         audioWorkletNode.port.onmessage = (e) => {
           if (!isRecording) return;
@@ -238,19 +241,19 @@
                 binary += String.fromCharCode(bytes[i]);
             }
             const base64Audio = window.btoa(binary);
-            const sampleRate = audioCtx.sampleRate;
 
+            // Use TARGET_SAMPLE_RATE (8000Hz) - audio is already downsampled in audio-processor.js
             const message = {
                 ws_audio_input: {
-                    sample_rate: sampleRate,
-                    sample_width: 16,
+                    sample_rate: TARGET_SAMPLE_RATE,
+                    sample_width: 2,
                     num_channels: 1,
-                    duration: int16Data.length / sampleRate,
+                    duration: int16Data.length / TARGET_SAMPLE_RATE,
                     audio_content: base64Audio
                 }
             };
 
-            console.log('📤 Sending audio chunk:', int16Data.byteLength, 'bytes');
+            console.log('📤 Sending audio chunk:', int16Data.byteLength, 'bytes @', TARGET_SAMPLE_RATE, 'Hz');
             ws.send(JSON.stringify(message));
           }
         };
@@ -321,41 +324,6 @@
       document.getElementById('stop').disabled = true;
       document.getElementById('status').textContent = 'Stopped';
       console.log('⏹  Recording stopped');
-    };
-    
-    // Test function: generate and play test tone
-    window.testTone = () => {
-      try {
-        if (!audioCtx) {
-          audioCtx = new AudioContext({ sampleRate: 16000 });
-        }
-        
-        console.log('🔊 Playing test tone (440Hz)...');
-        
-        const sampleRate = audioCtx.sampleRate;
-        const frequency = 440;
-        const duration = 1;
-        const numSamples = sampleRate * duration;
-        
-        const buffer = audioCtx.createBuffer(1, numSamples, sampleRate);
-        const channelData = buffer.getChannelData(0);
-        
-        for (let i = 0; i < numSamples; i++) {
-          channelData[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.3;
-        }
-        
-        const source = audioCtx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(audioCtx.destination);
-        source.start(0);
-        
-        source.onended = () => {
-          console.log('✅ Test tone finished');
-        };
-        
-      } catch (err) {
-        console.error('❌ Test tone error:', err);
-      }
     };
   </script>
 </body>

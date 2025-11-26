@@ -227,21 +227,37 @@ wss.on('connection', (ws, request) => {
                     }
 
                     const audioInput = message.ws_audio_input;
-                    // Decode Base64 to Buffer
-                    const audioContent = Buffer.from(audioInput.audio_content, 'base64');
+
+                    // Validate required fields
+                    if (!audioInput.audio_content) {
+                        console.error('[WebSocket] ⚠ Missing audio_content in ws_audio_input');
+                        return;
+                    }
+
+                    // Use exact values from client - do not apply defaults that may be incorrect
+                    const sampleRate = audioInput.sample_rate;
+                    const sampleWidth = audioInput.sample_width; // bytes (2 for Int16)
+                    const numChannels = audioInput.num_channels;
+                    const duration = audioInput.duration;
+
+                    // Log first few chunks for debugging
+                    if (audioChunkCount < 3) {
+                        console.log(`[WebSocket] Audio params from client: rate=${sampleRate}, width=${sampleWidth}, channels=${numChannels}, duration=${duration?.toFixed(4)}`);
+                    }
 
                     const clientRequest = {
                         status: true,
                         play_audio: {
-                            sample_rate: audioInput.sample_rate || 16000,
-                            sample_width: audioInput.sample_width || 16,
-                            num_channels: audioInput.num_channels || 1,
-                            duration: audioInput.duration || (audioContent.length / (16000 * 2)),
+                            sample_rate: sampleRate,
+                            sample_width: sampleWidth,
+                            num_channels: numChannels,
+                            duration: duration,
                             audio_content: audioInput.audio_content
                         }
                     };
 
-                    // console.log(`[gRPC] Sending audio chunk: ${audioContent.length} bytes (chunk #${audioChunkCount++})`);
+                    audioChunkCount++;
+                    // console.log(`[gRPC] Sending audio chunk: ${audioContent.length} bytes (chunk #${audioChunkCount})`);
                     stream.write(clientRequest);
                 } else if (message.ws_disconnect) {
                     // console.log('[gRPC] Sending disconnect message');

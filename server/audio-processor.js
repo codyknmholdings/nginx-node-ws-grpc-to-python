@@ -3,13 +3,13 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
         this.buffer = [];
-        this.bufferSize = 512; // Reduced from 2048 to 512 for lower latency (~32ms @ 16kHz)
+        this.bufferSize = 1024; // Buffer size in samples (về 0.128s ở 8kHz)
         this.processCount = 0;
         this.silenceCount = 0;
         this.gain = 1.0; // 100% = 1.0
 
         // Downsampling setup
-        this.targetSampleRate = 16000;
+        this.targetSampleRate = 8000;
         this.sourceSampleRate = sampleRate; // Global variable in AudioWorklet
         this.downsampleRatio = this.sourceSampleRate / this.targetSampleRate;
         this.nextSampleIndex = 0;
