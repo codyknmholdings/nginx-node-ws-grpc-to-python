@@ -9,7 +9,6 @@ const url = require('url');
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
-const HARDCODED_TOKEN = '3k659sdg98gkn3d9ghhg977';
 
 // Audio resampling configuration
 const INPUT_SAMPLE_RATE = 24000;  // gRPC server output rate
@@ -68,7 +67,6 @@ async function checkGrpcConnection() {
 
 // Configuration
 const WORKSPACE_ID = 'workspace_001';
-const HOTLINE = '+84987654321';
 
 // Serve static files
 app.get('/', (req, res) => {
@@ -86,29 +84,37 @@ server.on('upgrade', (request, socket, head) => {
     console.log('[Server] Upgrade request for:', pathname);
     console.log('[Server] Query parameters:', query);
 
-    // Path pattern: /live-call/websocket/{call_id}/{phone}
-    const match = pathname.match(/^\/live-call\/websocket\/([^\/]+)\/([^\/]+)$/);
+    // Path pattern: /api/asr/streaming?tenant_id=...&hotline=...&phone=...&call_id=...&speaker_id=...&env=...
+    if (pathname === '/api/asr/streaming') {
+        console.log('[Server] WebSocket upgrade matched for /api/asr/streaming');
 
-    if (match) {
-        console.log('[Server] WebSocket upgrade matched. Call ID:', match[1], 'Phone:', match[2]);
-        const callId = match[1];
-        const phone = match[2];
-        const token = query.token;
+        // Extract all parameters from query string
+        const tenantId = query.tenant_id;
+        const hotline = query.hotline;
+        const phone = query.phone;
+        const callId = query.call_id;
+        const speakerId = query.speaker_id;
+        const env = query.env || 'dev';
 
-        // Hardcoded token check
-        if (token === HARDCODED_TOKEN) {
-            wss.handleUpgrade(request, socket, head, (ws) => {
-                ws.callId = callId;
-                ws.phone = phone;
-                ws.tenantId = query.tenant_id || 'tenant_001';
-                ws.speakerId = query.speaker_id || 'speaker_001';
-                ws.env = query.env || 'dev';
-                wss.emit('connection', ws, request);
-            });
-        } else {
-            socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        // Validate required parameters
+        if (!tenantId || !phone || !callId) {
+            console.error('[Server] Missing required parameters: tenant_id, phone, or call_id');
+            socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
             socket.destroy();
+            return;
         }
+
+        console.log(`[Server] Connection params: tenant=${tenantId}, hotline=${hotline}, phone=${phone}, call_id=${callId}`);
+
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            ws.tenantId = tenantId;
+            ws.hotline = hotline;
+            ws.phone = phone;
+            ws.callId = callId;
+            ws.speakerId = speakerId;
+            ws.env = env;
+            wss.emit('connection', ws, request);
+        });
     } else {
         socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
         socket.destroy();
@@ -119,10 +125,11 @@ wss.on('connection', (ws, request) => {
     // console.log('[WebSocket] Client connected');
 
     const connectionId = crypto.randomUUID();
-    const callId = ws.callId || crypto.randomUUID();
-    const phone = ws.phone || '+84-987-654-321';
-    const tenantId = ws.tenantId || 'tenant_001';
-    const speakerId = ws.speakerId || 'speaker_001';
+    const tenantId = ws.tenantId;
+    const hotline = ws.hotline || '';
+    const phone = ws.phone;
+    const callId = ws.callId;
+    const speakerId = ws.speakerId || '';
     const env = ws.env || 'dev';
     let callInitialized = false;
     let audioChunkCount = 0;
@@ -135,7 +142,7 @@ wss.on('connection', (ws, request) => {
     });
 
     // Auto-send initial_info to gRPC immediately upon WebSocket connection
-    // Using parameters from URL path and query string
+    // Using parameters from URL query string
     console.log('[gRPC] Auto-sending initial_info to gRPC');
     const initialRequest = {
         status: true,
@@ -144,7 +151,7 @@ wss.on('connection', (ws, request) => {
             call_id: callId,
             customer_phone_number: phone,
             type_call: 'inbound',
-            hotline: HOTLINE,
+            hotline: hotline,
             url_audio_file: ""
         }
     };

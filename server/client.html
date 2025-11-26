@@ -32,14 +32,17 @@
         // Auto-detect protocol (ws or wss) and host based on current page URL
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = window.location.host; // e.g. localhost:8080 or my-domain.com
-        const token = '3k659sdg98gkn3d9ghhg977';
+        
+        // Connection parameters
+        const tenantId = 'tenant_001';
+        const hotline = '1900123456';
         const phone = '84987654321';
         const callId = 'call_' + Date.now();
-        const tenantId = 'tenant_001';
         const speakerId = 'speaker_001';
         const env = 'dev';
-        // Construct the WebSocket URL dynamically
-        const wsUrl = `${protocol}//${host}/live-call/websocket/${callId}/${phone}?token=${token}&tenant_id=${tenantId}&speaker_id=${speakerId}&env=${env}`;
+        
+        // Construct the WebSocket URL: /api/asr/streaming?tenant_id=...&hotline=...&phone=...&call_id=...&speaker_id=...&env=...
+        const wsUrl = `${protocol}//${host}/api/asr/streaming?tenant_id=${tenantId}&hotline=${hotline}&phone=${phone}&call_id=${callId}&speaker_id=${speakerId}&env=${env}`;
         console.log('Connecting to:', wsUrl);
 
         ws = new WebSocket(wsUrl);
