@@ -65,9 +65,6 @@ async function checkGrpcConnection() {
     });
 }
 
-// Configuration
-const WORKSPACE_ID = 'workspace_001';
-
 // Serve static files
 app.get('/', (req, res) => {
     res.sendFile(__dirname + '/client.html');
@@ -84,11 +81,11 @@ server.on('upgrade', (request, socket, head) => {
     console.log('[Server] Upgrade request for:', pathname);
     console.log('[Server] Query parameters:', query);
 
-    // Path pattern: /api/asr/streaming?tenant_id=...&hotline=...&phone=...&call_id=...&speaker_id=...&env=...
-    if (pathname === '/api/asr/streaming') {
+    // Path pattern: /api/asr/streaming
+    if (pathname === '/api/asr/streaming' || pathname === '/api/asr/streaming/') {
         console.log('[Server] WebSocket upgrade matched for /api/asr/streaming');
 
-        // Extract all parameters from query string
+        // Extract parameters from query string
         const tenantId = query.tenant_id;
         const hotline = query.hotline;
         const phone = query.phone;
@@ -97,20 +94,20 @@ server.on('upgrade', (request, socket, head) => {
         const env = query.env || 'dev';
 
         // Validate required parameters
-        if (!tenantId || !phone || !callId) {
-            console.error('[Server] Missing required parameters: tenant_id, phone, or call_id');
+        if (!tenantId || !callId) {
+            console.error('[Server] Missing required parameters: tenant_id or call_id');
             socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
             socket.destroy();
             return;
         }
 
-        console.log(`[Server] Connection params: tenant=${tenantId}, hotline=${hotline}, phone=${phone}, call_id=${callId}`);
+        console.log('[Server] Call ID:', callId, 'Phone:', phone, 'Hotline:', hotline);
 
         wss.handleUpgrade(request, socket, head, (ws) => {
-            ws.tenantId = tenantId;
-            ws.hotline = hotline;
-            ws.phone = phone;
             ws.callId = callId;
+            ws.phone = phone;
+            ws.hotline = hotline;
+            ws.tenantId = tenantId;
             ws.speakerId = speakerId;
             ws.env = env;
             wss.emit('connection', ws, request);
@@ -125,10 +122,10 @@ wss.on('connection', (ws, request) => {
     // console.log('[WebSocket] Client connected');
 
     const connectionId = crypto.randomUUID();
-    const tenantId = ws.tenantId;
+    const callId = ws.callId || crypto.randomUUID();
+    const phone = ws.phone || '';
     const hotline = ws.hotline || '';
-    const phone = ws.phone;
-    const callId = ws.callId;
+    const tenantId = ws.tenantId || '';
     const speakerId = ws.speakerId || '';
     const env = ws.env || 'dev';
     let callInitialized = false;

@@ -35,13 +35,14 @@
         
         // Connection parameters
         const tenantId = 'tenant_001';
-        const hotline = '1900123456';
-        const phone = '84987654321';
+        const hotline = '84987654321';
+        const phone = '84912345678';
         const callId = 'call_' + Date.now();
         const speakerId = 'speaker_001';
         const env = 'dev';
         
-        // Construct the WebSocket URL: /api/asr/streaming?tenant_id=...&hotline=...&phone=...&call_id=...&speaker_id=...&env=...
+        // Construct the WebSocket URL dynamically
+        // Format: wss://<domain>/api/asr/streaming?tenant_id=<tenant_id>&hotline=<hotline>&phone=<phone_number>&call_id=<call_id>&speaker_id=<speaker_id>&env=<env>
         const wsUrl = `${protocol}//${host}/api/asr/streaming?tenant_id=${tenantId}&hotline=${hotline}&phone=${phone}&call_id=${callId}&speaker_id=${speakerId}&env=${env}`;
         console.log('Connecting to:', wsUrl);
 
