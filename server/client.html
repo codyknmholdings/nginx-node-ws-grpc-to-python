@@ -48,6 +48,7 @@
         ws.onopen = () => {
           console.log('✅ WebSocket Connected');
           document.getElementById('status').textContent = 'Connected';
+          // Server auto-sends initial_info to gRPC, no need to send from client
           resolve();
         };
         
@@ -65,13 +66,14 @@
           reject(new Error('WebSocket connection failed. Please check if the server is running at ' + wsUrl));
         };
 
-        // Receive ws_audio_output from gRPC server
+        // Receive messages from server (doc v0.3 format)
         ws.onmessage = async (e) => {
           try {
             const message = JSON.parse(e.data);
             
-            if (message.ws_audio_output) {
-              const base64Audio = message.ws_audio_output.audio_content;
+            // Handle audio_output (doc v0.3)
+            if (message.audio_output) {
+              const base64Audio = message.audio_output.audio_content;
               // Decode Base64 to ArrayBuffer
               const binaryString = window.atob(base64Audio);
               const len = binaryString.length;
@@ -94,8 +96,8 @@
                 float32Data[i] = int16Data[i] / 32768.0;
               }
 
-              // Create AudioBuffer
-              const sampleRate = message.ws_audio_output.sample_rate || 16000;
+              // Create AudioBuffer - server resamples to 8kHz before sending
+              const sampleRate = 8000;
               console.log(`✅ Received audio chunk: ${audioData.byteLength} bytes, Rate: ${sampleRate}Hz`);
               const audioBuffer = audioCtx.createBuffer(1, float32Data.length, sampleRate);
               audioBuffer.getChannelData(0).set(float32Data);
@@ -114,18 +116,28 @@
               source.start(nextStartTime);
               nextStartTime += audioBuffer.duration;
 
-            } else if (message.ws_signal) {
-              console.log('ℹ️ Received signal:', message.ws_signal);
-              if (message.ws_signal.end_call) {
-                console.log('📴 Call ended by server. Call ID:', message.ws_signal.end_call.call_id);
-                // Stop recording
+            }
+            // Handle signal messages (doc v0.3)
+            else if (message.signal) {
+              console.log('ℹ️ Received signal:', message.signal);
+              
+              // Handle end_call signal
+              if (message.signal.end_call) {
+                console.log('📴 Call ended by server. Call ID:', message.signal.end_call.call_id);
                 isRecording = false;
                 document.getElementById('stop').click();
-              } else if (message.ws_signal.transfer_call) {
+              }
+              // Handle transfer_call signal
+              else if (message.signal.transfer_call) {
                 console.log('↪️  Call transfer signal received');
-                const transferInfo = message.ws_signal.transfer_call;
+                const transferInfo = message.signal.transfer_call;
                 console.log('   Target staff:', transferInfo.target_staff);
                 alert('Call is being transferred to: ' + (transferInfo.target_staff?.map(s => s.name).join(', ') || 'available staff'));
+              }
+              // Handle error signal
+              else if (message.signal.error_code) {
+                console.error('❌ Server error:', message.signal.message, '(code:', message.signal.error_code, ')');
+                alert('Server error: ' + message.signal.message);
               }
             }
           } catch (err) {
@@ -243,10 +255,11 @@
             const base64Audio = window.btoa(binary);
 
             // Use TARGET_SAMPLE_RATE (8000Hz) - audio is already downsampled in audio-processor.js
+            // Send play_audio message (doc v0.3 format)
             const message = {
-                ws_audio_input: {
+                play_audio: {
                     sample_rate: TARGET_SAMPLE_RATE,
-                    sample_width: 2,
+                    sample_width: 2,  // bits (doc v0.3 uses bits, not bytes)
                     num_channels: 1,
                     duration: int16Data.length / TARGET_SAMPLE_RATE,
                     audio_content: base64Audio
@@ -284,10 +297,10 @@
     document.getElementById('stop').onclick = () => {
       isRecording = false;
       
-      // Send disconnect message to server before closing WebSocket
+      // Send disconnect message to server before closing WebSocket (doc v0.3 format)
       if (ws && ws.readyState === WebSocket.OPEN) {
         const disconnectMessage = {
-          ws_disconnect: {}
+          disconnect: {}
         };
         console.log('📤 Sending disconnect message');
         ws.send(JSON.stringify(disconnectMessage));
