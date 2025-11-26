@@ -11,6 +11,36 @@ const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 const HARDCODED_TOKEN = '3k659sdg98gkn3d9ghhg977';
 
+// Audio configuration
+const GRPC_AUDIO_SAMPLE_RATE = 24000; // gRPC server output sample rate
+const CLIENT_AUDIO_SAMPLE_RATE = 8000; // Client playback sample rate
+
+// Resample Int16 PCM audio from sourceSampleRate to targetSampleRate
+function resampleInt16Audio(inputBase64, sourceSampleRate, targetSampleRate) {
+    // Decode base64 to buffer
+    const inputBuffer = Buffer.from(inputBase64, 'base64');
+    const inputSamples = new Int16Array(inputBuffer.buffer, inputBuffer.byteOffset, inputBuffer.length / 2);
+
+    const ratio = sourceSampleRate / targetSampleRate;
+    const outputLength = Math.floor(inputSamples.length / ratio);
+    const outputSamples = new Int16Array(outputLength);
+
+    // Simple linear interpolation resampling
+    for (let i = 0; i < outputLength; i++) {
+        const srcIndex = i * ratio;
+        const srcIndexFloor = Math.floor(srcIndex);
+        const srcIndexCeil = Math.min(srcIndexFloor + 1, inputSamples.length - 1);
+        const frac = srcIndex - srcIndexFloor;
+
+        // Linear interpolation between two samples
+        const sample = inputSamples[srcIndexFloor] * (1 - frac) + inputSamples[srcIndexCeil] * frac;
+        outputSamples[i] = Math.round(sample);
+    }
+
+    // Convert back to base64
+    return Buffer.from(outputSamples.buffer).toString('base64');
+}
+
 // Function to check gRPC connection
 async function checkGrpcConnection() {
     return new Promise((resolve, reject) => {
@@ -132,14 +162,20 @@ wss.on('connection', (ws, request) => {
             // console.log(`[gRPC] Received audio output`);
 
             if (ws.readyState === 1) { // OPEN
-                // audio_content is already base64 string from proto
+                // Resample audio from 24kHz to 8kHz before sending to client
+                const resampledAudio = resampleInt16Audio(
+                    audioChunk.audio_content,
+                    GRPC_AUDIO_SAMPLE_RATE,
+                    CLIENT_AUDIO_SAMPLE_RATE
+                );
+
                 const responseMessage = {
                     audio_output: {
-                        audio_content: audioChunk.audio_content
+                        audio_content: resampledAudio
                     }
                 };
                 ws.send(JSON.stringify(responseMessage));
-                // console.log(`[WebSocket] Sent audio chunk to client`);
+                // console.log(`[WebSocket] Sent resampled audio chunk to client (24kHz -> 8kHz)`);
             }
         } else if (serverResponse.signal) {
             const signal = serverResponse.signal;
