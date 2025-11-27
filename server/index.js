@@ -14,6 +14,10 @@ const wss = new WebSocketServer({ noServer: true });
 const INPUT_SAMPLE_RATE = 24000;  // gRPC server output rate
 const OUTPUT_SAMPLE_RATE = 8000; // Target rate for WebSocket client
 
+// Audio buffering configuration
+const AUDIO_BUFFER_DURATION = 2.0; // Buffer audio until ~2 seconds before sending
+const AUDIO_BUFFER_MIN_BYTES = OUTPUT_SAMPLE_RATE * 2 * AUDIO_BUFFER_DURATION; // 8000 samples/sec * 2 bytes/sample * 2 sec = 32000 bytes
+
 /**
  * Resample Int16 PCM audio from one sample rate to another using linear interpolation
  * @param {Buffer|string} audioData - Base64 encoded Int16 PCM audio
@@ -131,6 +135,45 @@ wss.on('connection', (ws, request) => {
     let callInitialized = false;
     let audioChunkCount = 0;
 
+    // Audio buffer for accumulating audio chunks before sending to client
+    let audioBuffer = [];
+    let audioBufferBytes = 0;
+
+    // Function to flush audio buffer and send to client
+    function flushAudioBuffer(force = false) {
+        if (audioBuffer.length === 0) return;
+        if (!force && audioBufferBytes < AUDIO_BUFFER_MIN_BYTES) return;
+
+        // Combine all buffered audio chunks into one
+        const combinedBuffer = Buffer.concat(audioBuffer);
+        const combinedBase64 = combinedBuffer.toString('base64');
+
+        // Calculate total audio duration
+        const numSamples = combinedBuffer.length / 2; // Int16 = 2 bytes per sample
+        const audioDuration = numSamples / OUTPUT_SAMPLE_RATE;
+
+        if (ws.readyState === 1) { // OPEN
+            const responseMessage = {
+                type: "playAudio",
+                data: {
+                    audioContentType: "raw",
+                    sampleRate: OUTPUT_SAMPLE_RATE,
+                    audioContent: combinedBase64,
+                    audioDuration: parseFloat(audioDuration.toFixed(4)),
+                    textContent: ""
+                },
+                final: 0,
+                sip_number: ""
+            };
+            ws.send(JSON.stringify(responseMessage));
+            console.log(`[WebSocket] Sent buffered audio: ${combinedBuffer.length} bytes, duration=${audioDuration.toFixed(2)}s`);
+        }
+
+        // Clear buffer
+        audioBuffer = [];
+        audioBufferBytes = 0;
+    }
+
     // Tạo gRPC bidirectional stream
     const stream = client.StreamCall((error, response) => {
         if (error) {
@@ -210,27 +253,18 @@ wss.on('connection', (ws, request) => {
                 try {
                     // Resample audio from gRPC rate (24kHz) to client rate (8kHz)
                     const resampledAudio = resampleAudio(audioChunk.audio_content, inputRate, OUTPUT_SAMPLE_RATE);
-
-                    // Calculate audio duration based on resampled data
                     const resampledBuffer = Buffer.from(resampledAudio, 'base64');
-                    const numSamples = resampledBuffer.length / 2; // Int16 = 2 bytes per sample
-                    const audioDuration = numSamples / OUTPUT_SAMPLE_RATE;
 
-                    // Convert gRPC audio_output to new WebSocket format
-                    const responseMessage = {
-                        type: "playAudio",
-                        data: {
-                            audioContentType: "raw",
-                            sampleRate: OUTPUT_SAMPLE_RATE,
-                            audioContent: resampledAudio,
-                            audioDuration: parseFloat(audioDuration.toFixed(4)),
-                            textContent: ""
-                        },
-                        final: 0,
-                        sip_number: ""
-                    };
-                    ws.send(JSON.stringify(responseMessage));
-                    // console.log(`[WebSocket] Sent resampled audio: ${inputRate}Hz -> ${OUTPUT_SAMPLE_RATE}Hz`);
+                    // Add to buffer instead of sending immediately
+                    audioBuffer.push(resampledBuffer);
+                    audioBufferBytes += resampledBuffer.length;
+
+                    // console.log(`[WebSocket] Buffered audio chunk: ${resampledBuffer.length} bytes, total buffer: ${audioBufferBytes} bytes`);
+
+                    // Check if buffer is large enough to send (~2 seconds)
+                    if (audioBufferBytes >= AUDIO_BUFFER_MIN_BYTES) {
+                        flushAudioBuffer();
+                    }
                 } catch (err) {
                     console.error('[WebSocket] Error resampling audio:', err.message);
                 }
@@ -240,6 +274,9 @@ wss.on('connection', (ws, request) => {
 
             if (signal.end_call) {
                 // console.log('[gRPC] Received end_call signal for:', signal.end_call.call_id);
+                // Flush any remaining audio before ending
+                flushAudioBuffer(true);
+
                 if (ws.readyState === 1) {
                     // Convert gRPC signal to new WebSocket format
                     const disconnectMessage = {
@@ -256,6 +293,9 @@ wss.on('connection', (ws, request) => {
                 }
             } else if (signal.transfer_call) {
                 // console.log('[gRPC] Received transfer_call signal');
+                // Flush any remaining audio before transfer
+                flushAudioBuffer(true);
+
                 if (ws.readyState === 1) {
                     // Get sip_number from target_staff (first staff's extension)
                     const targetStaff = signal.transfer_call.target_staff || [];
@@ -347,6 +387,11 @@ wss.on('connection', (ws, request) => {
 
     ws.on('close', () => {
         console.log('[WebSocket] Client disconnected');
+
+        // Flush any remaining audio in buffer (client disconnected, so this won't be sent)
+        // Just clear the buffer
+        audioBuffer = [];
+        audioBufferBytes = 0;
 
         // Send disconnect message if stream is still active and writable
         if (callInitialized && stream.writable) {
