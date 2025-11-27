@@ -1,6 +1,7 @@
 services:
   nginx:
     image: nginx:alpine
+    restart: unless-stopped
     env_file:
       - ./.env
     ports:
@@ -14,6 +15,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
       - PORT=8080
     env_file:
