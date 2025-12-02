@@ -138,9 +138,16 @@ wss.on('connection', (ws, request) => {
     // Audio buffer for accumulating audio chunks before sending to client
     let audioBuffer = [];
     let audioBufferBytes = 0;
+    let audioFlushTimeout = null; // Timeout to flush buffer if no new audio arrives
 
     // Function to flush audio buffer and send to client
     function flushAudioBuffer(force = false) {
+        // Clear any pending flush timeout
+        if (audioFlushTimeout) {
+            clearTimeout(audioFlushTimeout);
+            audioFlushTimeout = null;
+        }
+
         if (audioBuffer.length === 0) return;
         if (!force && audioBufferBytes < AUDIO_BUFFER_MIN_BYTES) return;
 
@@ -266,6 +273,14 @@ wss.on('connection', (ws, request) => {
                     // Check if buffer is large enough to send (~2 seconds)
                     if (audioBufferBytes >= AUDIO_BUFFER_MIN_BYTES) {
                         flushAudioBuffer();
+                    } else {
+                        // Set timeout to flush buffer if no new audio arrives within 500ms
+                        if (audioFlushTimeout) {
+                            clearTimeout(audioFlushTimeout);
+                        }
+                        audioFlushTimeout = setTimeout(() => {
+                            flushAudioBuffer(true); // force flush remaining audio
+                        }, 500);
                     }
                 } catch (err) {
                     console.error('[WebSocket] Error resampling audio:', err.message);
@@ -391,6 +406,12 @@ wss.on('connection', (ws, request) => {
 
     ws.on('close', () => {
         console.log('[WebSocket] Client disconnected');
+
+        // Clear flush timeout
+        if (audioFlushTimeout) {
+            clearTimeout(audioFlushTimeout);
+            audioFlushTimeout = null;
+        }
 
         // Flush any remaining audio in buffer (client disconnected, so this won't be sent)
         // Just clear the buffer
