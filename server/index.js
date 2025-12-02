@@ -163,7 +163,8 @@ wss.on('connection', (ws, request) => {
                     textContent: ""
                 },
                 final: 0,
-                sip_number: ""
+                sip_number: "",
+                send_at: Date.now()
             };
             ws.send(JSON.stringify(responseMessage));
             console.log(`[WebSocket] Sent buffered audio: ${combinedBuffer.length} bytes, duration=${audioDuration.toFixed(2)}s`);
@@ -230,7 +231,8 @@ wss.on('connection', (ws, request) => {
                             error_code: serverResponse.error.error_code || 80100,
                             internal_error_code: serverResponse.error.internal_error_code || 500,
                             message: serverResponse.error.message
-                        }
+                        },
+                        send_at: Date.now()
                     }));
 
                     // Close connection if gRPC reports error (e.g. initial_info failed)
@@ -280,7 +282,8 @@ wss.on('connection', (ws, request) => {
                 if (ws.readyState === 1) {
                     // Convert gRPC signal to new WebSocket format
                     const disconnectMessage = {
-                        type: "disconnect"
+                        type: "disconnect",
+                        send_at: Date.now()
                     };
                     // console.log('[WebSocket] Sending disconnect signal to client');
                     ws.send(JSON.stringify(disconnectMessage));
@@ -304,7 +307,8 @@ wss.on('connection', (ws, request) => {
                     // Convert gRPC signal to new WebSocket format
                     const transferMessage = {
                         type: "transfer",
-                        sip_number: sipNumber
+                        sip_number: sipNumber,
+                        send_at: Date.now()
                     };
                     // console.log('[WebSocket] Sending transfer signal to client');
                     ws.send(JSON.stringify(transferMessage));
@@ -313,7 +317,7 @@ wss.on('connection', (ws, request) => {
                 // Other signal types - convert to appropriate format
                 if (ws.readyState === 1) {
                     // For unknown signals, send as-is with type wrapper
-                    ws.send(JSON.stringify({ type: "signal", data: signal }));
+                    ws.send(JSON.stringify({ type: "signal", data: signal, send_at: Date.now() }));
                 }
             }
         }
